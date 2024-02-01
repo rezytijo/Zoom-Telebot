@@ -1,0 +1,6 @@
+bardapi==0.1.38
+pyTelegramBotAPI
+requests
+pytz
+zoomus
+python-dotenv
