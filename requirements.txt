@@ -1,4 +1,4 @@
-bardapi==0.1.38
+bardapi
 pyTelegramBotAPI
 requests
 pytz
