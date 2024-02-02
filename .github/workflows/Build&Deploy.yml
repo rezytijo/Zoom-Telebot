@@ -59,9 +59,3 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          
-      - name: Deploy Stage
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: 'https://docker.primall.my.id/api/stacks/webhooks/6820df0a-441b-433a-966e-7ec6021707ef'
-          method: 'POST'
