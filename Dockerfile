@@ -11,8 +11,8 @@ RUN apt-get update && \
 
 ENV LANG id_ID.UTF-8
 ENV LC_ALL id_ID.UTF-8
-
-RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
+
 
 CMD [ "python3", "./telegram_bot.py" ]
