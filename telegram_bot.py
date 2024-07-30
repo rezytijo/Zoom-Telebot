@@ -1,8 +1,8 @@
 import telebot, os, time, locale, json, pytz
-from bardapi import Bard
+from gemini import Gemini
 from zoomus import ZoomClient
 from datetime import datetime
-import bardapi
+import Geminiapi
 import requests
 import subprocess
 from dotenv import load_dotenv
@@ -11,7 +11,7 @@ if os.path.exists('.env'):
     load_dotenv()
 
 TELEGRAM_API = os.environ['TELEGRAM_API']
-BARD_API = os.environ['BARD_API']
+GEMINI_API = os.environ['GEMINI_API']
 ZOOM_ACCOUNT_ID = os.environ['ZOOM_ACCOUNT_ID']
 ZOOM_CLIENT_ID = os.environ['ZOOM_CLIENT_ID']
 ZOOM_CLIENT_SECRET = os.environ['ZOOM_CLIENT_SECRET']
@@ -71,9 +71,9 @@ def daily(message):
 
 @bot.message_handler(func=lambda message: message.text.endswith("?"))
 def answer_question(message):
-    bard = Bard(token=BARD_API)
+    Gemini = Gemini(token=GEMINI_API)
     question = message.text
-    response = bard.get_answer(question)['content']
+    response = Gemini.get_answer(question)['content']
     bot.reply_to(message, "*Halo saya adalah asisten virtual* \nIni adalah hasil pencarian dari pertanyaan anda *"+question+"*\n"+response, parse_mode='Markdown')
 
 @bot.message_handler(commands=["help"])
@@ -89,11 +89,11 @@ def help(message):
 
     bot.reply_to(message, help_message)
 
-@bot.message_handler(commands=["askBard"])
-def askBard(message):
-    bard = Bard(token=BARD_API)
+@bot.message_handler(commands=["askGemini"])
+def askGemini(message):
+    Gemini = Gemini(token=GEMINI_API)
     question = message.text
-    response = bard.get_answer(question)['content']
+    response = Gemini.get_answer(question)['content']
     bot.reply_to(message, "*Halo saya adalah asisten virtual* \nIni adalah hasil pencarian dari pertanyaan anda *"+question+"*\n"+response, parse_mode='Markdown')
 
 # Mendefinisikan perintah /meet
