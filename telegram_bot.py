@@ -37,10 +37,6 @@ def start_polling(bot):
             # Tunggu selama 1 detik sebelum melakukan restart untuk menghindari restart yang terlalu cepat
             time.sleep(1)
 
-# Deklarasikan fungsi untuk menjalankan file Python "run.py"
-def run_file():
-    # Jalankan file Python
-    subprocess.run("python","run.py")
 
 # Bot Token
 
@@ -58,16 +54,10 @@ def start(message):
 
     * /start: Mulai bot
     * /help: Menampilkan bantuan
-    * /report [tanggal]: Mengunduh File Laporan (belum jadi, masih mikir mau ngambil dari mana datanya)
     * /meet "Topic" "00 Bulan Tahun" "HH:MM" contoh /meet "Topic" "01 Januari 2024" "18:30"
+    * /check_meeting: Menampilkan daftar meeting yang akan datang
     """
     bot.reply_to(message, start_message)
-
-@bot.message_handler(commands=["report"])
-def daily(message):
-    file_path = "./Picture/"+folder_time+"/Daily Report Kamsiber Kominfo Periode "+file_time+".pdf"
-    caption = "Ini Laporan Periode "+file_time
-    bot.send_document(message, open(file_path, "rb"), caption=caption)
 
 @bot.message_handler(func=lambda message: message.text.endswith("?"))
 def answer_question(message):
@@ -83,10 +73,9 @@ def help(message):
 
     * /start: Mulai bot
     * /help: Menampilkan bantuan
-    * /report [tanggal]: Mengunduh File Laporan (belum jadi, masih mikir mau ngambil dari mana datanya)
     * /meet "Topic" "00 Bulan Tahun" "HH:MM" contoh /meet "Topic" "01 Januari 2024" "18:30"
+    * /check_meeting: Menampilkan daftar meeting yang akan datang
     """
-
     bot.reply_to(message, help_message)
 
 @bot.message_handler(commands=["askGemini"])
@@ -125,6 +114,21 @@ def meet(message):
     # Buat instance ZoomClient
     client = ZoomClient(ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_ACCOUNT_ID)
     
+    # Mendapatkan daftar meeting yang sudah ada
+    meetings = client.meeting.list(user_id='me').json()['meetings']
+
+    # Mengecek apakah ada meeting lain pada waktu yang sama
+    for meeting in meetings:
+        existing_start_time = datetime.strptime(meeting['start_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
+        existing_duration = meeting['duration']
+        existing_end_time = existing_start_time + timedelta(minutes=existing_duration)
+        
+        # Mengecek apakah waktu mulai atau waktu selesai bentrok dengan meeting yang ada
+        if (start_time >= existing_start_time and start_time < existing_end_time) or \
+           (start_time + timedelta(minutes=120) > existing_start_time and start_time + timedelta(minutes=120) <= existing_end_time):
+            bot.reply_to(message, f"Pada waktu tersebut terdapat meeting lain dengan Topic: {meeting['topic']}")
+            return
+
     # Membuat meeting dengan judul dan waktu yang diinginkan
     meeting = client.meeting.create(topic=topic, start_time=start_time, user_id='me', duration=120, default_password='true')
 
@@ -134,7 +138,17 @@ def meet(message):
 
     # Mencetak informasi meeting dengan format baru
     formatted_date = date.strftime("%A, %d %B %Y")
-    bot.reply_to(message, f'Selamat pagi Bapak/Ibu/Rekan - Rekan\nBerikut disampaikan {topic} pada:\n\n📆  {formatted_date}\n⏰  {time_str} WIB – selesai\n🔗  {meeting_join_url}\n\nDemikian disampaikan, terimakasih.')
+    hour = now.hour
+    if 4 <= hour < 10:
+        waktu = "Selamat pagi"
+    elif 10 <= hour < 15:
+        waktu = "Selamat siang"
+    elif 15 <= hour < 19:
+        waktu = "Selamat sore"
+    else:
+        waktu = "Selamat malam"
+    bot.reply_to(message, f'{waktu} Bapak/Ibu/Rekan - Rekan\nBerikut disampaikan {topic} pada:\n\n📆  {formatted_date}\n⏰  {time_str} WIB – selesai\n🔗  {meeting_join_url}\n\nDemikian disampaikan, terimakasih.')
+
 
 @bot.message_handler(content_types=["text"])
 def echo(message):
