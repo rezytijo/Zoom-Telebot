@@ -39,9 +39,9 @@ services:
     container_name: soc-bot
     restart: unless-stopped
     environment:
-      - TZ=Asia/Jakarta
+      - TZ=$TZ
       - TELEGRAM_API=$TELEGRAM_API
-      - BARD_API=$BARD_API
+      - GEMINI_API=$GEMINI_API
       - ZOOM_ACCOUNT_ID=$ZOOM_ACCOUNT_ID
       - ZOOM_CLIENT_ID=$ZOOM_CLIENT_ID
       - ZOOM_CLIENT_SECRET=$ZOOM_CLIENT_SECRET

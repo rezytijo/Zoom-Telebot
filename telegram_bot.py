@@ -1,8 +1,7 @@
-import telebot, os, time, locale, json, pytz, timedelta
+import telebot, os, time, locale, json, pytz
 from google import genai
 from zoomus import ZoomClient
-from datetime import datetime
-import requests
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 if os.path.exists('.env'):
