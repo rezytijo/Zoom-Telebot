@@ -1,10 +1,8 @@
 import telebot, os, time, locale, json, pytz
-from gemini import Gemini
+from google import genai
 from zoomus import ZoomClient
 from datetime import datetime
-import Geminiapi
 import requests
-import subprocess
 from dotenv import load_dotenv
 
 if os.path.exists('.env'):
@@ -80,10 +78,11 @@ def help(message):
 
 @bot.message_handler(commands=["askGemini"])
 def askGemini(message):
-    Gemini = Gemini(token=GEMINI_API)
+    Gemini = genai.Client(api_key=GEMINI_API)
     question = message.text
-    response = Gemini.get_answer(question)['content']
-    bot.reply_to(message, "*Halo saya adalah asisten virtual* \nIni adalah hasil pencarian dari pertanyaan anda *"+question+"*\n"+response, parse_mode='Markdown')
+    response = Gemini.models.generate_content(model="gemini-2.0-flash",contents=question,)
+
+    bot.reply_to(message, response, parse_mode='Markdown')
 
 # Mendefinisikan perintah /meet
 @bot.message_handler(commands=['meet'])
@@ -110,7 +109,9 @@ def meet(message):
 
     # Mengubah zona waktu menjadi UTC
     start_time = start_time.astimezone(pytz.UTC)
-    
+    existing_duration = 120  # Set duration to 120 minutes
+    existing_end_time = start_time + timedelta(minutes=existing_duration)
+
     # Buat instance ZoomClient
     client = ZoomClient(ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_ACCOUNT_ID)
     
@@ -119,16 +120,15 @@ def meet(message):
 
     # Mengecek apakah ada meeting lain pada waktu yang sama
     for meeting in meetings:
-        existing_start_time = datetime.strptime(meeting['start_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
-        existing_duration = meeting['duration']
-        existing_end_time = existing_start_time + timedelta(minutes=existing_duration)
+        meeting_start_time = datetime.strptime(meeting['start_time'], "%Y-%m-%dT%H:%M:%SZ")
+        meeting_start_time = pytz.UTC.localize(meeting_start_time)
+        meeting_end_time = meeting_start_time + timedelta(minutes=meeting['duration'])
         
         # Mengecek apakah waktu mulai atau waktu selesai bentrok dengan meeting yang ada
-        if (start_time >= existing_start_time and start_time < existing_end_time) or \
-           (start_time + timedelta(minutes=120) > existing_start_time and start_time + timedelta(minutes=120) <= existing_end_time):
+        if (start_time <= meeting_start_time < existing_end_time) or (start_time < meeting_end_time <= existing_end_time):
             bot.reply_to(message, f"Pada waktu tersebut terdapat meeting lain dengan Topic: {meeting['topic']}")
             return
-
+        
     # Membuat meeting dengan judul dan waktu yang diinginkan
     meeting = client.meeting.create(topic=topic, start_time=start_time, user_id='me', duration=120, default_password='true')
 

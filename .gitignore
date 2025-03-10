@@ -2,3 +2,5 @@
 .venv
 .env
 /Zoom-Telebot
+telegram_bot2.py
+whitelist.txt

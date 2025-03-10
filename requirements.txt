@@ -1,6 +1,5 @@
-python-gemini-api
+google-genai
 pyTelegramBotAPI
-python-telegram-bot
 requests
 pytz
 zoomus
