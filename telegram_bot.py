@@ -1,4 +1,4 @@
-import telebot, os, time, locale, json, pytz
+import telebot, os, time, locale, json, pytz, timedelta
 from google import genai
 from zoomus import ZoomClient
 from datetime import datetime
