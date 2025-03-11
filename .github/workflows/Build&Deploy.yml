@@ -1,4 +1,4 @@
-name: ci
+name: Build&Deploy
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           draft: false
           prerelease: false
 
-        - name: Docker meta
+      - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
