@@ -16,8 +16,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
-      - name: Docker meta
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+            tag_name: ${{ github.event.created_at || github.event.head_commit.timestamp }}
+            commitish: ${{ github.sha }}
+            body: ${{ github.event.head_commit.message }}
+          release_name: Release ${{ github.event.created_at || github.event.head_commit.timestamp }}
+          draft: false
+          prerelease: false
+
+        - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
