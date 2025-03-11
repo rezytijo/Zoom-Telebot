@@ -23,9 +23,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-            tag_name: ${{ github.event.created_at || github.event.head_commit.timestamp }}
-            commitish: ${{ github.sha }}
-            body: ${{ github.event.head_commit.message }}
+          tag_name: ${{ github.event.created_at || github.event.head_commit.timestamp }}
+          commitish: ${{ github.sha }}
+          body: ${{ github.event.head_commit.message }}
           release_name: Release ${{ github.event.created_at || github.event.head_commit.timestamp }}
           draft: false
           prerelease: false
