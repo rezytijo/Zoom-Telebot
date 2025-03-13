@@ -55,17 +55,17 @@ def format_greeting():
 
 @bot.message_handler(commands=["start"])
 def start(message):
-    start_message = """
-    *Selamat datang di BOT-SOC!*
-    Berikut adalah daftar perintah yang didukung oleh bot:
-
-    * /start: Mulai bot
-    * /help: Menampilkan bantuan
-    * /meet "Topic" "00 Bulan Tahun" "HH:MM" contoh /meet "Topic" "01 Januari 2024" "18:30"
-    * /check_meeting: Menampilkan daftar meeting yang akan datang
-    * /askGemini: Bertanya kepada AI Gemini
-    """
-    bot.reply_to(message, start_message, parse_mode='Markdown')
+    start_message = (f"""
+Selamat datang di BOT-SOC!
+                     
+Berikut adalah daftar perintah yang didukung oleh bot:
+* /start: Mulai bot
+* /help: Menampilkan bantuan
+* /meet "Topic" "00 Bulan Tahun" "HH:MM" contoh /meet "Topic" "01 Januari 2024" "18:30"
+* /check_meeting: Menampilkan daftar meeting yang akan datang
+* /askGemini: Bertanya kepada AI Gemini
+""")
+    bot.reply_to(message, start_message)
     logging.info(f"{message.from_user.username}: /start")
 
 # @bot.message_handler(func=lambda message: message.text.endswith("?"))
@@ -78,16 +78,16 @@ def start(message):
 
 @bot.message_handler(commands=["help"])
 def help(message):
-    help_message = """
-    Berikut adalah daftar perintah yang didukung oleh bot:
+    help_message = (f"""
+Berikut adalah daftar perintah yang didukung oleh bot:
 
-    * /start: Mulai bot
-    * /help: Menampilkan bantuan
-    * /meet "Topic" "00 Bulan Tahun" "HH:MM" contoh /meet "Topic" "01 Januari 2024" "18:30"
-    * /check_meeting: Menampilkan daftar meeting yang akan datang
-    * /askGemini: Bertanya kepada AI Gemini
-    """
-    bot.reply_to(message, help_message, parse_mode='Markdown')
+* /start: Mulai bot
+* /help: Menampilkan bantuan
+* /meet "Topic" "00 Bulan Tahun" "HH:MM" contoh /meet "Topic" "01 Januari 2024" "18:30"
+* /check_meeting: Menampilkan daftar meeting yang akan datang
+* /askGemini: Bertanya kepada AI Gemini
+""")
+    bot.reply_to(message, help_message)
     logging.info(f"{message.from_user.username}: /help")
 
 @bot.message_handler(commands=["askGemini"])
