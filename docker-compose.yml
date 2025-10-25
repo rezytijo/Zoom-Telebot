@@ -4,12 +4,11 @@ services:
     container_name: zoom-telebot-soc
     restart: unless-stopped
 
-    # Environment
-    env_file:
-      - .env
+    # Environment (define in Portainer UI)
     environment:
       - LOG_LEVEL=INFO
       - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
+      # Add other environment variables in Portainer (e.g., BOT_TOKEN, etc.)
 
     # Volumes for persistence
     volumes:    
