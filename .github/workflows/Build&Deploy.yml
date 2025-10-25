@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - "main"
-    tags:
-      - "v1.0.1"
   pull_request:
     branches:
       - "main"
@@ -17,18 +15,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Get current date
+        id: date
+        run: |
+          DATE=$(date +%d)
+          MONTH=$(date +%B)
+          YEAR=$(date +%Y)
+          case $MONTH in
+            January) MONTH_ID="Januari" ;;
+            February) MONTH_ID="Februari" ;;
+            March) MONTH_ID="Maret" ;;
+            April) MONTH_ID="April" ;;
+            May) MONTH_ID="Mei" ;;
+            June) MONTH_ID="Juni" ;;
+            July) MONTH_ID="Juli" ;;
+            August) MONTH_ID="Agustus" ;;
+            September) MONTH_ID="September" ;;
+            October) MONTH_ID="Oktober" ;;
+            November) MONTH_ID="November" ;;
+            December) MONTH_ID="Desember" ;;
+          esac
+          RELEASE_NAME="Release - $DATE $MONTH_ID $YEAR"
+          TAG_NAME="v$YEAR.$(date +%m).$DATE"
+          echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag ${{ steps.date.outputs.tag_name }}
+          git push origin ${{ steps.date.outputs.tag_name }}
+
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref_name }}
-          commitish: ${{ github.sha }}
+          tag_name: ${{ steps.date.outputs.tag_name }}
+          name: ${{ steps.date.outputs.release_name }}
           body: ${{ github.event.head_commit.message }}
-          release_name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
@@ -39,6 +67,7 @@ jobs:
             rezytijo/zoom-telebot
           # generate Docker tags based on the following events/attributes
           tags: |
+            type=raw,value=latest
             type=schedule
             type=ref,event=branch
             type=ref,event=pr
@@ -60,14 +89,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push latest
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: rezytijo/zoom-telebot:latest
-          
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
