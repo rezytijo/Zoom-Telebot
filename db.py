@@ -1,0 +1,445 @@
+import aiosqlite
+from typing import Optional, List, Dict
+from config import settings
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+CREATE_SQL = [
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INTEGER UNIQUE,
+        username TEXT,
+        status TEXT DEFAULT 'pending', -- pending, whitelisted, banned
+        role TEXT DEFAULT 'guest' -- guest, user, owner
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS meetings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        zoom_meeting_id TEXT UNIQUE,
+        topic TEXT,
+        start_time TEXT,
+        join_url TEXT,
+        short_url TEXT,
+        status TEXT DEFAULT 'active', -- active, deleted, expired
+        created_by TEXT, -- INTEGER (telegram_id) for bot-created, "CreatedFromZoomApp" for zoom-created
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS shortlinks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        original_url TEXT NOT NULL,
+        short_url TEXT,
+        provider TEXT NOT NULL,
+        custom_alias TEXT,
+        zoom_meeting_id TEXT, -- NULL if not for meeting
+        status TEXT DEFAULT 'active', -- active, failed, deleted
+        created_by INTEGER, -- telegram_id of creator
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        error_message TEXT -- error if creation failed
+    )
+    """,
+]
+
+
+async def init_db():
+    logger.info("Initializing database at %s", settings.db_path)
+    async with aiosqlite.connect(settings.db_path) as db:
+        for s in CREATE_SQL:
+            await db.execute(s)
+        
+        # Run migrations
+        await run_migrations(db)
+        
+        await db.commit()
+    logger.info("Database initialized")
+
+
+async def add_pending_user(telegram_id: int, username: Optional[str]):
+    logger.debug("add_pending_user telegram_id=%s username=%s", telegram_id, username)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO users (telegram_id, username, status, role) VALUES (?, ?, 'pending', 'guest')",
+            (telegram_id, username),
+        )
+        await db.commit()
+    logger.info("User %s added to pending list", telegram_id)
+
+
+async def list_pending_users() -> List[Dict]:
+    logger.debug("list_pending_users called")
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT id, telegram_id, username, status, role FROM users WHERE status = 'pending'")
+        rows = await cur.fetchall()
+        return [dict(id=r[0], telegram_id=r[1], username=r[2], status=r[3], role=r[4]) for r in rows]
+
+
+async def list_all_users() -> List[Dict]:
+    logger.debug("list_all_users called")
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT id, telegram_id, username, status, role FROM users ORDER BY id DESC")
+        rows = await cur.fetchall()
+        return [dict(id=r[0], telegram_id=r[1], username=r[2], status=r[3], role=r[4]) for r in rows]
+
+
+async def update_user_status(telegram_id: int, status: str, role: Optional[str] = None):
+    logger.debug("update_user_status telegram_id=%s status=%s role=%s", telegram_id, status, role)
+    async with aiosqlite.connect(settings.db_path) as db:
+        if role:
+            await db.execute("UPDATE users SET status = ?, role = ? WHERE telegram_id = ?", (status, role, telegram_id))
+        else:
+            await db.execute("UPDATE users SET status = ? WHERE telegram_id = ?", (status, telegram_id))
+        await db.commit()
+    logger.info("User %s status updated to %s", telegram_id, status)
+
+
+async def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict]:
+    logger.debug("get_user_by_telegram_id %s", telegram_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT id, telegram_id, username, status, role FROM users WHERE telegram_id = ?", (telegram_id,))
+        r = await cur.fetchone()
+        if not r:
+            logger.debug("get_user_by_telegram_id: not found %s", telegram_id)
+            return None
+        user = dict(id=r[0], telegram_id=r[1], username=r[2], status=r[3], role=r[4])
+        logger.debug("get_user_by_telegram_id: found %s -> %s", telegram_id, user)
+        return user
+
+
+async def ban_toggle_user(telegram_id: int, banned: bool):
+    status = 'banned' if banned else 'whitelisted'
+    role = 'guest' if banned else 'user'
+    logger.debug("ban_toggle_user %s banned=%s", telegram_id, banned)
+    await update_user_status(telegram_id, status, role)
+
+
+async def delete_user(telegram_id: int):
+    """Delete a user row from the database by telegram_id."""
+    logger.debug("delete_user %s", telegram_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("DELETE FROM users WHERE telegram_id = ?", (telegram_id,))
+        await db.commit()
+    logger.info("User %s deleted from database", telegram_id)
+
+
+# Meetings functions
+async def add_meeting(zoom_meeting_id: str, topic: str, start_time: str, join_url: str, created_by: int):
+    logger.debug("add_meeting zoom_id=%s topic=%s created_by=%s", zoom_meeting_id, topic, created_by)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute(
+            "INSERT INTO meetings (zoom_meeting_id, topic, start_time, join_url, created_by, status) VALUES (?, ?, ?, ?, ?, 'active')",
+            (zoom_meeting_id, topic, start_time, join_url, created_by),
+        )
+        await db.commit()
+    logger.info("Meeting %s added to DB", zoom_meeting_id)
+
+
+async def update_meeting_short_url(zoom_meeting_id: str, short_url: str):
+    logger.debug("update_meeting_short_url zoom_id=%s short_url=%s", zoom_meeting_id, short_url)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("UPDATE meetings SET short_url = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?", (short_url, zoom_meeting_id))
+        await db.commit()
+    logger.info("Meeting %s short URL updated", zoom_meeting_id)
+
+
+async def update_meeting_short_url_by_join_url(join_url: str, short_url: str):
+    logger.debug("update_meeting_short_url_by_join_url join_url=%s short_url=%s", join_url, short_url)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("UPDATE meetings SET short_url = ?, updated_at = CURRENT_TIMESTAMP WHERE join_url = ?", (short_url, join_url))
+        await db.commit()
+    logger.info("Meeting with join_url %s short URL updated", join_url)
+
+
+async def list_meetings() -> List[Dict]:
+    logger.debug("list_meetings called")
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT id, zoom_meeting_id, topic, start_time, join_url, short_url, status, created_by, created_at, updated_at FROM meetings ORDER BY created_at DESC")
+        rows = await cur.fetchall()
+        return [dict(id=r[0], zoom_meeting_id=r[1], topic=r[2], start_time=r[3], join_url=r[4], short_url=r[5], status=r[6], created_by=r[7], created_at=r[8], updated_at=r[9]) for r in rows]
+
+
+async def list_meetings_with_shortlinks() -> List[Dict]:
+    """List meetings with their associated shortlinks"""
+    logger.debug("list_meetings_with_shortlinks called")
+    async with aiosqlite.connect(settings.db_path) as db:
+        # Get meetings
+        meetings_cur = await db.execute("""
+            SELECT id, zoom_meeting_id, topic, start_time, join_url, short_url, status, created_by, created_at, updated_at 
+            FROM meetings 
+            WHERE status = 'active' 
+            ORDER BY created_at DESC
+        """)
+        meetings_rows = await meetings_cur.fetchall()
+        
+        meetings = []
+        for r in meetings_rows:
+            meeting = dict(
+                id=r[0], 
+                zoom_meeting_id=r[1], 
+                topic=r[2], 
+                start_time=r[3], 
+                join_url=r[4], 
+                short_url=r[5], 
+                status=r[6], 
+                created_by=r[7], 
+                created_at=r[8], 
+                updated_at=r[9]
+            )
+            
+            # Get shortlinks for this meeting
+            shortlinks_cur = await db.execute("""
+                SELECT id, original_url, short_url, provider, custom_alias, status, created_at, error_message
+                FROM shortlinks 
+                WHERE zoom_meeting_id = ? AND status = 'active'
+                ORDER BY created_at DESC
+            """, (meeting['zoom_meeting_id'],))
+            shortlinks_rows = await shortlinks_cur.fetchall()
+            
+            meeting['shortlinks'] = [
+                dict(
+                    id=r[0],
+                    original_url=r[1],
+                    short_url=r[2],
+                    provider=r[3],
+                    custom_alias=r[4],
+                    status=r[5],
+                    created_at=r[6],
+                    error_message=r[7]
+                ) for r in shortlinks_rows
+            ]
+            
+            meetings.append(meeting)
+        
+        return meetings
+
+
+async def update_meeting_status(zoom_meeting_id: str, status: str):
+    """Update meeting status (active, deleted, expired)"""
+    logger.debug("update_meeting_status zoom_id=%s status=%s", zoom_meeting_id, status)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("UPDATE meetings SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?", (status, zoom_meeting_id))
+        await db.commit()
+    logger.info("Meeting %s status updated to %s", zoom_meeting_id, status)
+
+
+async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
+    """
+    Sync meetings from Zoom API to database.
+    Returns dict with counts: {'added': int, 'updated': int, 'deleted': int, 'errors': int}
+    """
+    logger.info("Starting Zoom meetings sync")
+    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'errors': 0}
+    
+    try:
+        # Get meetings from Zoom
+        zoom_data = await zoom_client.list_upcoming_meetings('me')
+        zoom_meetings = zoom_data.get('meetings', [])
+        zoom_ids = {str(meeting.get('id', '')) for meeting in zoom_meetings if meeting.get('id')}
+        logger.info("Found %d active meetings in Zoom", len(zoom_ids))
+        
+        # Get existing active meetings from DB
+        existing_meetings = await list_meetings()
+        existing_active = {m['zoom_meeting_id']: m for m in existing_meetings if m['status'] == 'active'}
+        logger.info("Found %d active meetings in DB", len(existing_active))
+        
+        async with aiosqlite.connect(settings.db_path) as db:
+            # Mark meetings that exist in DB but not in Zoom as deleted
+            for zoom_id, meeting in existing_active.items():
+                if zoom_id not in zoom_ids:
+                    try:
+                        await db.execute("UPDATE meetings SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?", (zoom_id,))
+                        stats['deleted'] += 1
+                        logger.debug("Marked meeting %s as deleted", zoom_id)
+                    except Exception as e:
+                        logger.exception("Failed to mark meeting %s as deleted: %s", zoom_id, e)
+                        stats['errors'] += 1
+            
+            # Process meetings from Zoom
+            for meeting in zoom_meetings:
+                zoom_id = str(meeting.get('id', ''))
+                if not zoom_id:
+                    logger.warning("Meeting without ID: %s", meeting)
+                    stats['errors'] += 1
+                    continue
+                
+                topic = meeting.get('topic', 'No Topic')
+                start_time = meeting.get('start_time', '')
+                join_url = meeting.get('join_url', '')
+                
+                if zoom_id not in existing_active:
+                    # Add new meeting
+                    try:
+                        await db.execute(
+                            "INSERT INTO meetings (zoom_meeting_id, topic, start_time, join_url, status, created_by) VALUES (?, ?, ?, ?, 'active', 'CreatedFromZoomApp')",
+                            (zoom_id, topic, start_time, join_url),
+                        )
+                        stats['added'] += 1
+                        logger.debug("Added meeting %s: %s", zoom_id, topic)
+                    except Exception as e:
+                        logger.exception("Failed to add meeting %s: %s", zoom_id, e)
+                        stats['errors'] += 1
+                else:
+                    # Update existing meeting if needed
+                    existing = existing_active[zoom_id]
+                    needs_update = (
+                        existing['topic'] != topic or
+                        existing['start_time'] != start_time or
+                        existing['join_url'] != join_url
+                    )
+                    if needs_update:
+                        try:
+                            await db.execute(
+                                "UPDATE meetings SET topic = ?, start_time = ?, join_url = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                                (topic, start_time, join_url, zoom_id)
+                            )
+                            stats['updated'] += 1
+                            logger.debug("Updated meeting %s: %s", zoom_id, topic)
+                        except Exception as e:
+                            logger.exception("Failed to update meeting %s: %s", zoom_id, e)
+                            stats['errors'] += 1
+            
+            await db.commit()
+        
+        logger.info("Zoom sync completed: added=%d, updated=%d, deleted=%d, errors=%d", stats['added'], stats['updated'], stats['deleted'], stats['errors'])
+        return stats
+        
+    except Exception as e:
+        logger.exception("Failed to sync meetings from Zoom: %s", e)
+        stats['errors'] += 1
+        return stats
+
+
+async def run_migrations(db):
+    """Run database migrations"""
+    try:
+        # Check for status column
+        cur = await db.execute("PRAGMA table_info(meetings)")
+        columns = await cur.fetchall()
+        column_names = [col[1] for col in columns]
+        column_types = {col[1]: col[2] for col in columns}
+        
+        if 'status' not in column_names:
+            logger.info("Adding status column to meetings table")
+            await db.execute("ALTER TABLE meetings ADD COLUMN status TEXT DEFAULT 'active'")
+        
+        if 'updated_at' not in column_names:
+            logger.info("Adding updated_at column to meetings table")
+            await db.execute("ALTER TABLE meetings ADD COLUMN updated_at TIMESTAMP")
+            # Set default value for existing records
+            await db.execute("UPDATE meetings SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL")
+        
+        # Check if created_by is still INTEGER, convert to TEXT
+        if 'created_by' in column_types and column_types['created_by'].upper() == 'INTEGER':
+            logger.info("Converting created_by column from INTEGER to TEXT")
+            # SQLite doesn't support direct type change, so we recreate the column
+            await db.execute("ALTER TABLE meetings ADD COLUMN created_by_new TEXT")
+            await db.execute("UPDATE meetings SET created_by_new = CAST(created_by AS TEXT) WHERE created_by IS NOT NULL")
+            await db.execute("UPDATE meetings SET created_by_new = 'CreatedFromZoomApp' WHERE created_by = '0'")
+            await db.execute("DROP INDEX IF EXISTS idx_meetings_created_by")  # Drop any potential indexes
+            await db.execute("ALTER TABLE meetings DROP COLUMN created_by")
+            await db.execute("ALTER TABLE meetings RENAME COLUMN created_by_new TO created_by")
+            
+        # Update existing records to have proper created_by values
+        await db.execute("UPDATE meetings SET created_by = 'CreatedFromZoomApp' WHERE created_by IS NULL OR created_by = '0'")
+        await db.execute("UPDATE meetings SET status = 'active' WHERE status IS NULL")
+        
+    except Exception as e:
+        logger.exception("Migration failed: %s", e)
+
+
+# Shortlinks functions
+async def add_shortlink(original_url: str, short_url: Optional[str], provider: str, custom_alias: Optional[str] = None, zoom_meeting_id: Optional[str] = None, created_by: Optional[int] = None, error_message: Optional[str] = None) -> int:
+    """Add a new shortlink record. Returns the ID of the inserted record."""
+    status = 'failed' if error_message else 'active'
+    
+    async with aiosqlite.connect(settings.db_path) as db:
+        cursor = await db.execute("""
+            INSERT INTO shortlinks (original_url, short_url, provider, custom_alias, zoom_meeting_id, status, created_by, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (original_url, short_url, provider, custom_alias, zoom_meeting_id, status, created_by, error_message))
+        
+        shortlink_id = cursor.lastrowid
+        await db.commit()
+        
+        logger.info("Added shortlink record: id=%s, original_url=%s, short_url=%s, provider=%s, custom_alias=%s, status=%s", 
+                   shortlink_id, original_url, short_url, provider, custom_alias, status)
+        
+        return shortlink_id
+
+
+async def update_shortlink_status(shortlink_id: int, status: str, short_url: Optional[str] = None, error_message: Optional[str] = None):
+    """Update shortlink status and optionally short_url or error_message."""
+    async with aiosqlite.connect(settings.db_path) as db:
+        if short_url:
+            await db.execute("""
+                UPDATE shortlinks SET status = ?, short_url = ?, error_message = NULL WHERE id = ?
+            """, (status, short_url, shortlink_id))
+        elif error_message:
+            await db.execute("""
+                UPDATE shortlinks SET status = ?, error_message = ? WHERE id = ?
+            """, (status, error_message, shortlink_id))
+        else:
+            await db.execute("""
+                UPDATE shortlinks SET status = ? WHERE id = ?
+            """, (status, shortlink_id))
+        
+        await db.commit()
+        logger.info("Updated shortlink %s status to %s", shortlink_id, status)
+
+
+async def get_shortlinks_by_user(created_by: int, limit: int = 50) -> List[Dict]:
+    """Get shortlinks created by a specific user."""
+    async with aiosqlite.connect(settings.db_path) as db:
+        cursor = await db.execute("""
+            SELECT id, original_url, short_url, provider, custom_alias, zoom_meeting_id, status, created_at, error_message
+            FROM shortlinks 
+            WHERE created_by = ? 
+            ORDER BY created_at DESC 
+            LIMIT ?
+        """, (created_by, limit))
+        
+        rows = await cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        
+        return [dict(zip(columns, row)) for row in rows]
+
+
+async def get_shortlink_stats() -> Dict:
+    """Get statistics about shortlinks."""
+    async with aiosqlite.connect(settings.db_path) as db:
+        # Total shortlinks
+        cursor = await db.execute("SELECT COUNT(*) FROM shortlinks")
+        result = await cursor.fetchone()
+        total = result[0] if result else 0
+        
+        # Active shortlinks
+        cursor = await db.execute("SELECT COUNT(*) FROM shortlinks WHERE status = 'active'")
+        result = await cursor.fetchone()
+        active = result[0] if result else 0
+        
+        # Failed shortlinks
+        cursor = await db.execute("SELECT COUNT(*) FROM shortlinks WHERE status = 'failed'")
+        result = await cursor.fetchone()
+        failed = result[0] if result else 0
+        
+        # Shortlinks by provider
+        cursor = await db.execute("""
+            SELECT provider, COUNT(*) as count 
+            FROM shortlinks 
+            GROUP BY provider 
+            ORDER BY count DESC
+        """)
+        provider_rows = await cursor.fetchall()
+        by_provider = {row[0]: row[1] for row in provider_rows}
+        
+        return {
+            'total': total,
+            'active': active,
+            'failed': failed,
+            'by_provider': by_provider
+        }

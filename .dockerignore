@@ -1,3 +1,94 @@
-/dev
+# Git
+.git
+.gitignore
+.gitattributes
+.github/
+README.md
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+venv
 .venv
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.pytest_cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.cache
+.mypy_cache
+.dmypy_cache
+
+# Virtual environments
 .env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+zoom_telebot.db
+zoom_telebot.db-journal
+*.db
+*.db-journal
+
+# Backup
+backup_*/
+*.back
+
+# Development files
+dev_run.py
+run_dev.py
+dev.py
+test_*.py
+tests/
+.pytest_cache/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+Makefile
+
+# Documentation (keep in container for reference)
+# Test-Flow.md
+
+# Legacy files
+telegram_bot2.py
+whitelist.txt
+
+# CI/CD
+.github/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Obsidian vault files
+.vault/
+.obsidian

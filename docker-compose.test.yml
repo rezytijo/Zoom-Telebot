@@ -1,0 +1,61 @@
+# Testing docker-compose configuration
+# Use this for running tests in isolated environment
+
+services:
+  zoom-telebot-test:
+    build:
+      context: .
+      target: development
+    container_name: zoom-telebot-soc-test
+    restart: "no"
+    profiles: ["test"]
+
+    # Test environment
+    environment:
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=sqlite+aiosqlite:///./data/test.db
+      - TELEGRAM_TOKEN=test_token
+      - INITIAL_OWNER_ID=123456789
+      - SKIP_ENV_VALIDATION=true
+
+    # Test volumes
+    volumes:
+      - ./tests:/app/tests:rw
+      - ./data:/app/data:rw
+
+    # Test networks
+    networks:
+      - test-network
+
+    # Override command for testing
+    command: ["python", "-m", "pytest", "tests/", "-v"]
+
+    # Test logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Database for testing
+  test-db:
+    image: sqlite3:latest
+    container_name: zoom-telebot-test-db
+    restart: "no"
+    profiles: ["test"]
+
+    volumes:
+      - ./data:/data:rw
+
+    command: ["sqlite3", "/data/test.db", ".read /dev/null"]
+
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  test-data:
+    driver: local

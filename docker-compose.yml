@@ -1,0 +1,94 @@
+services:
+  zoom-telebot:
+    build:
+      context: .
+      target: production
+    container_name: zoom-telebot-soc
+    restart: unless-stopped
+
+    # Environment
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
+
+    # Volumes for persistence
+    volumes:    
+      - zoom-telebot_data:/app/data:rw
+      - zoom-telebot_logs:/app/logs:rw
+
+    # Networks
+    networks:
+      - bot-network
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Development service (optional)
+  zoom-telebot-dev:
+    build:
+      context: .
+      target: development
+    container_name: zoom-telebot-soc-dev
+    restart: "no"
+    profiles: ["dev"]
+
+    # Environment
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
+
+    # Volumes for development
+    volumes:
+      - .:/app:rw
+      - zoom-telebot_data:/app/data:rw
+      - zoom-telebot_logs:/app/logs:rw
+
+    # Networks
+    networks:
+      - bot-network
+
+    # Development overrides
+    command: ["python", "dev.py", "run"]
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  zoom-telebot_data:
+    driver: local
+  zoom-telebot_logs:
+    driver: local

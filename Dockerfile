@@ -1,18 +1,77 @@
-FROM python:3.13-rc-slim
+# Dockerfile for Zoom-Telebot SOC
+FROM python:3.11-slim as base
 
-WORKDIR /usr/src/app
-COPY . .
-RUN apt-get update && \
-    apt-get install -y locales && \
-    sed -i -e 's/# id_ID.UTF-8 UTF-8/id_ID.UTF-8 UTF-8/' /etc/locale.gen && \
-    dpkg-reconfigure --frontend=noninteractive locales
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONHASHSEED=random
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN apt-get install -y python3 python3-pip
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -o /usr/local/bin/su-exec.c https://raw.githubusercontent.com/ncopa/su-exec/master/su-exec.c \
+    && gcc -Wall -Werror -g -O2 /usr/local/bin/su-exec.c -o /usr/local/bin/su-exec \
+    && rm /usr/local/bin/su-exec.c \
+    && chmod +x /usr/local/bin/su-exec
 
-ENV LANG id_ID.UTF-8
-ENV LC_ALL id_ID.UTF-8
-COPY . .
+# Create app user
+RUN groupadd -r botuser && useradd -r -g botuser botuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Production stage
+FROM base as production
 
-CMD [ "python3", "./telegram_bot.py" ]
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs
+
+# Set permissions
+RUN chown -R botuser:botuser /app
+
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Set entrypoint (runs as root initially)
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# Switch to non-root user (this will be done in entrypoint)
+# USER botuser
+
+# Development stage (optional)
+FROM base as development
+
+# Install additional dev dependencies
+RUN pip install --no-cache-dir \
+    watchdog \
+    pytest \
+    pytest-asyncio
+
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs
+
+# Set permissions
+RUN chown -R botuser:botuser /app
+
+# Switch to non-root user
+USER botuser
+
+# Development command
+CMD ["python", "dev.py", "run"]

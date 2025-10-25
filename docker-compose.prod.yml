@@ -1,0 +1,93 @@
+# Production docker-compose configuration
+# Use this for production deployments
+
+services:
+  zoom-telebot:
+    build:
+      context: .
+      target: production
+    container_name: zoom-telebot-soc-prod
+    restart: always
+
+    # Production environment
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
+      - SKIP_ENV_VALIDATION=false
+
+    # Production volumes
+    volumes:
+      - zoom-telebot_data:/app/data:rw
+      - zoom-telebot_logs:/app/logs:rw
+      - ./backups:/app/backups:ro
+
+    # Production networks
+    networks:
+      - bot-network
+
+    # Production health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+
+    # Production logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "production"
+
+    # Production resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+    # Production security
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Optional: Database backup service
+  backup-service:
+    image: alpine:latest
+    container_name: zoom-telebot-backup
+    restart: "no"
+    profiles: ["backup"]
+
+    volumes:
+      - bot-data:/data:ro
+      - ./backups:/backups:rw
+
+    command: >
+      sh -c "
+        echo 'Starting backup...';
+        mkdir -p /backups;
+        cp /data/zoom_telebot.db /backups/zoom_telebot_$(date +%Y%m%d_%H%M%S).db;
+        echo 'Backup completed';
+      "
+
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  zoom-telebot_data:
+    driver: local
+  zoom-telebot_logs:
+    driver: local
