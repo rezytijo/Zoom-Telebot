@@ -45,7 +45,7 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git tag ${{ steps.date.outputs.tag_name }}
-          git push origin ${{ steps.date.outputs.tag_name }}
+          git push --force origin ${{ steps.date.outputs.tag_name }}
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
