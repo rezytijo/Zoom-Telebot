@@ -377,22 +377,52 @@ async def main():
 
 
 def check_env_file():
-    """Check if .env file exists and guide user."""
+    """Check if environment variables are configured (either from .env or OS)."""
+    import os
+    from pathlib import Path
+
     env_path = Path(".env")
     env_example_path = Path(".env.example")
 
-    if not env_path.exists():
-        print("⚠️  .env file not found!")
-        if env_example_path.exists():
-            print("   Copy .env.example to .env and fill in your configuration:")
-            print("   cp .env.example .env")
-        else:
-            print("   Create .env file with required configuration")
+    # Required environment variables
+    required_vars = [
+        'TELEGRAM_TOKEN',
+        'INITIAL_OWNER_ID',
+        'ZOOM_CLIENT_ID',
+        'ZOOM_CLIENT_SECRET',
+        'DATABASE_URL'
+    ]
+
+    # Check if all required variables are set
+    missing_vars = []
+    for var in required_vars:
+        if not os.getenv(var):
+            missing_vars.append(var)
+
+    if not missing_vars:
+        print("✅ All required environment variables are set")
+        return True
+
+    # If some variables are missing, check if .env file exists
+    if env_path.exists():
+        print("⚠️  Some required environment variables are missing")
+        print("   Please check your .env file and ensure all required variables are set:")
+        for var in missing_vars:
+            print(f"   - {var}")
         print()
         return False
 
-    print("✅ .env file found")
-    return True
+    # If no .env file and variables missing, guide user
+    print("⚠️  .env file not found and some required environment variables are missing!")
+    print("   You can either:")
+    print("   1. Create .env file: cp .env.example .env (then edit it)")
+    print("   2. Set environment variables directly in your OS/shell")
+    print()
+    print("   Required variables that are missing:")
+    for var in missing_vars:
+        print(f"   - {var}")
+    print()
+    return False
 
 
 if __name__ == "__main__":
