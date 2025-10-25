@@ -1,8 +1,6 @@
 services:
   zoom-telebot:
-    build:
-      context: .
-      target: production
+    image: rezytijo/zoom-telebot:latest
     container_name: zoom-telebot-soc
     restart: unless-stopped
 
@@ -46,42 +44,6 @@ services:
         reservations:
           memory: 256M
           cpus: '0.25'
-
-  # Development service (optional)
-  zoom-telebot-dev:
-    build:
-      context: .
-      target: development
-    container_name: zoom-telebot-soc-dev
-    restart: "no"
-    profiles: ["dev"]
-
-    # Environment
-    env_file:
-      - .env
-    environment:
-      - LOG_LEVEL=DEBUG
-      - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
-
-    # Volumes for development
-    volumes:
-      - .:/app:rw
-      - zoom-telebot_data:/app/data:rw
-      - zoom-telebot_logs:/app/logs:rw
-
-    # Networks
-    networks:
-      - bot-network
-
-    # Development overrides
-    command: ["python", "dev.py", "run"]
-
-    # Logging
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
 networks:
   bot-network:
