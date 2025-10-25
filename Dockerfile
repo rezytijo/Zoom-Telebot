@@ -12,11 +12,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -o /usr/local/bin/su-exec.c https://raw.githubusercontent.com/ncopa/su-exec/master/su-exec.c \
-    && gcc -Wall -Werror -g -O2 /usr/local/bin/su-exec.c -o /usr/local/bin/su-exec \
-    && rm /usr/local/bin/su-exec.c \
-    && chmod +x /usr/local/bin/su-exec
+    gosu \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create app user
 RUN groupadd -r botuser && useradd -r -g botuser botuser

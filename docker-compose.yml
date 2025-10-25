@@ -1,13 +1,15 @@
 services:
   zoom-telebot:
-    image: rezytijo/zoom-telebot:latest
+    build:
+      context: .
+      target: production
     container_name: zoom-telebot-soc
     restart: unless-stopped
 
     # Environment (values from host environment variables)
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./data/zoom_telebot.db}
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./zoom_telebot.db}
       - DEFAULT_MODE=${DEFAULT_MODE}
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
       - INITIAL_OWNER_ID=${INITIAL_OWNER_ID}

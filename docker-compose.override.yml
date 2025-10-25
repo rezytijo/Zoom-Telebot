@@ -1,0 +1,26 @@
+# Override file for development environment
+# This file is automatically merged with docker-compose.yml when running
+# docker-compose commands
+
+services:
+  zoom-telebot:
+    # Override for development
+    environment:
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
+
+    # Mount source code for live reload
+    volumes:
+      - .:/app:rw
+      - ./data:/app/data:rw
+      - ./logs:/app/logs:rw
+
+    # Development command
+    command: ["python", "dev.py", "debug"]
+
+    # Keep container running for development
+    restart: "no"
+
+    # Additional development ports (if needed)
+    # ports:
+    #   - "8000:8000"

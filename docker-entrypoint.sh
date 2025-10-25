@@ -25,12 +25,39 @@ fi
 
 echo "✅ Permissions fixed"
 
-# Check if .env file exists
+# Check environment configuration
 if [ ! -f /app/.env ]; then
     echo "⚠️  .env file not found!"
-    echo "   Please mount your .env file as volume or set environment variables"
-    echo "   Example: docker run -v \$(pwd)/.env:/app/.env zoom-telebot"
-    exit 1
+
+    # Check if required environment variables are set
+    required_vars="TELEGRAM_TOKEN INITIAL_OWNER_ID ZOOM_CLIENT_ID ZOOM_CLIENT_SECRET DATABASE_URL"
+    missing_vars=""
+
+    for var in $required_vars; do
+        if [ -z "${!var}" ]; then
+            missing_vars="$missing_vars $var"
+        fi
+    done
+
+    if [ -n "$missing_vars" ]; then
+        echo "❌ Required environment variables are missing:$missing_vars"
+        echo "   Please either:"
+        echo "   1. Mount your .env file: -v \$(pwd)/.env:/app/.env"
+        echo "   2. Set environment variables in your Docker configuration"
+        exit 1
+    else
+        echo "✅ Using environment variables from Docker configuration"
+        # Create a minimal .env file from environment variables for compatibility
+        echo "# Generated from Docker environment variables" > /app/.env
+        for var in $required_vars SID_ID SID_KEY BITLY_TOKEN ZOOM_ACCOUNT_ID INITIAL_OWNER_USERNAME DEFAULT_MODE LOG_LEVEL; do
+            if [ -n "${!var}" ]; then
+                echo "$var=${!var}" >> /app/.env
+            fi
+        done
+        echo "✅ Temporary .env file created from environment variables"
+    fi
+else
+    echo "✅ .env file found"
 fi
 
 # Validate environment (optional - can be disabled)
@@ -46,5 +73,14 @@ fi
 echo "✅ Environment ready!"
 
 # Switch to botuser and execute the main command
-echo "🚀 Starting bot as botuser..."
-exec su-exec botuser "$@"
+echo "🚀 Starting bot..."
+
+# For debugging, try running as root first
+echo "Running as root for testing..."
+if [ $# -eq 0 ]; then
+    echo "No arguments provided, using default command: python main.py"
+    exec python main.py
+else
+    echo "Using provided arguments: $@"
+    exec "$@"
+fi
