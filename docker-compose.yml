@@ -6,20 +6,8 @@ services:
     container_name: zoom-telebot-soc
     restart: unless-stopped
 
-    # Environment (values from host environment variables)
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./zoom_telebot.db}
-      - DEFAULT_MODE=${DEFAULT_MODE}
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - INITIAL_OWNER_ID=${INITIAL_OWNER_ID}
-      - INITIAL_OWNER_USERNAME=${INITIAL_OWNER_USERNAME}
-      - ZOOM_ACCOUNT_ID=${ZOOM_ACCOUNT_ID}
-      - ZOOM_CLIENT_ID=${ZOOM_CLIENT_ID}
-      - ZOOM_CLIENT_SECRET=${ZOOM_CLIENT_SECRET}
-      - SID_ID=${SID_ID}
-      - SID_KEY=${SID_KEY}
-      - BITLY_TOKEN=${BITLY_TOKEN}
+    # Environment variables loaded from .env file (via override)
+    # Note: env_file is specified in docker-compose.override.yml
 
     # Volumes for persistence
     volumes:    

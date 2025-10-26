@@ -25,39 +25,38 @@ fi
 
 echo "✅ Permissions fixed"
 
-# Check environment configuration
+# Check if required environment variables are set
+echo "🔍 Checking environment variables..."
+required_vars="TELEGRAM_TOKEN INITIAL_OWNER_ID ZOOM_CLIENT_ID ZOOM_CLIENT_SECRET"
+missing_vars=""
+
+for var in $required_vars; do
+    if [ -z "${!var}" ]; then
+        missing_vars="$missing_vars $var"
+    fi
+done
+
+if [ -n "$missing_vars" ]; then
+    echo "❌ Required environment variables are missing:$missing_vars"
+    echo "   Please set these environment variables in your Docker configuration"
+    echo "   Example: -e TELEGRAM_TOKEN=your_token -e INITIAL_OWNER_ID=your_id"
+    exit 1
+fi
+
+echo "✅ All required environment variables are set"
+
+# Create .env file from environment variables for compatibility (optional)
 if [ ! -f /app/.env ]; then
-    echo "⚠️  .env file not found!"
-
-    # Check if required environment variables are set
-    required_vars="TELEGRAM_TOKEN INITIAL_OWNER_ID ZOOM_CLIENT_ID ZOOM_CLIENT_SECRET DATABASE_URL"
-    missing_vars=""
-
-    for var in $required_vars; do
-        if [ -z "${!var}" ]; then
-            missing_vars="$missing_vars $var"
+    echo "📝 Creating .env file from environment variables..."
+    echo "# Generated from Docker environment variables" > /app/.env
+    for var in $required_vars SID_ID SID_KEY BITLY_TOKEN ZOOM_ACCOUNT_ID INITIAL_OWNER_USERNAME DEFAULT_MODE LOG_LEVEL DATABASE_URL; do
+        if [ -n "${!var}" ]; then
+            echo "$var=${!var}" >> /app/.env
         fi
     done
-
-    if [ -n "$missing_vars" ]; then
-        echo "❌ Required environment variables are missing:$missing_vars"
-        echo "   Please either:"
-        echo "   1. Mount your .env file: -v \$(pwd)/.env:/app/.env"
-        echo "   2. Set environment variables in your Docker configuration"
-        exit 1
-    else
-        echo "✅ Using environment variables from Docker configuration"
-        # Create a minimal .env file from environment variables for compatibility
-        echo "# Generated from Docker environment variables" > /app/.env
-        for var in $required_vars SID_ID SID_KEY BITLY_TOKEN ZOOM_ACCOUNT_ID INITIAL_OWNER_USERNAME DEFAULT_MODE LOG_LEVEL; do
-            if [ -n "${!var}" ]; then
-                echo "$var=${!var}" >> /app/.env
-            fi
-        done
-        echo "✅ Temporary .env file created from environment variables"
-    fi
+    echo "✅ .env file created from environment variables"
 else
-    echo "✅ .env file found"
+    echo "✅ .env file already exists"
 fi
 
 # Validate environment (optional - can be disabled)
