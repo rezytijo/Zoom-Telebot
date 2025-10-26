@@ -61,13 +61,34 @@ def check_env():
     print("🔍 Checking environment...")
 
     env_file = PROJECT_ROOT / ".env"
-    if not env_file.exists():
-        print("❌ .env file not found")
-        print("   Copy .env.example to .env and configure it")
-        return False
+    if env_file.exists():
+        print("✅ .env file found - loading environment variables from file")
+    else:
+        print("⚠️  .env file not found - using OS environment variables")
+        print("   Note: Make sure required environment variables are set")
 
-    print("✅ .env file exists")
-    return True
+    # Import settings to trigger dotenv loading
+    try:
+        from config import settings
+
+        # Basic validation of critical environment variables
+        missing_vars = []
+        if not settings.bot_token:
+            missing_vars.append("TELEGRAM_TOKEN")
+        if not settings.owner_id:
+            missing_vars.append("INITIAL_OWNER_ID")
+
+        if missing_vars:
+            print(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
+            print("   Set these in .env file or as OS environment variables")
+            return False
+
+        print("✅ Environment configuration valid")
+        return True
+
+    except Exception as e:
+        print(f"❌ Error loading configuration: {e}")
+        return False
 
 def show_help():
     """Show help information."""

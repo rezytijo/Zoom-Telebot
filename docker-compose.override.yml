@@ -5,6 +5,8 @@
 services:
   zoom-telebot:
     # Override for development
+    env_file:
+      - .env
     environment:
       - LOG_LEVEL=DEBUG
       - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
