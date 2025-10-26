@@ -26,6 +26,42 @@ import shortener
 logger = logging.getLogger(__name__)
 
 
+def set_default_environment():
+    """Set default environment variables if not already set."""
+    # Default environment variables for Zoom-Telebot SOC
+    defaults = {
+        # Database & Default Mode Configuration
+        'DATABASE_URL': 'sqlite+aiosqlite:///./zoom_telebot.db',
+        'DEFAULT_MODE': 'polling',
+
+        # Telegram Bot Configuration
+        'TELEGRAM_TOKEN': '1999673703:AAEcfnCOY8nM7HZ3oLyxdnmhoALisHi_A9E',
+        'INITIAL_OWNER_ID': '400501849',
+        'INITIAL_OWNER_USERNAME': '@primallpheasooter',
+
+        # Zoom Integration Configuration
+        'ZOOM_ACCOUNT_ID': 'uuDHfAnyT52C1a-DvPr7uw',
+        'ZOOM_CLIENT_ID': 'GkMaYUGkQ5GxMstEjTrog',
+        'ZOOM_CLIENT_SECRET': '1QZsNsrplxf79zcs71PgIgU2E8C3owBG',
+
+        # Short URL Service Configuration
+        'SID_ID': '68fa5a330a94f59c57200b7b',
+        'SID_KEY': 'cmh3nd6yj000501m4av32w7wo.dMpqGdhWMzgidy-GRXT83J21lqt1cOgh',
+        'BITLY_TOKEN': '72ff2ece9b1d1ec6aa2f285a32525a2e59b7e3e4'
+    }
+
+    print("🔧 Setting up default environment variables...")
+
+    for key, value in defaults.items():
+        if not os.getenv(key):
+            os.environ[key] = value
+            print(f"   ✅ Set {key}")
+        else:
+            print(f"   ⚠️  {key} already set (using existing value)")
+
+    print("✅ Environment variables configured")
+
+
 class EnvironmentSetup:
     """Handles environment setup and validation for the bot."""
 
@@ -88,7 +124,7 @@ class EnvironmentSetup:
         # Check if shorteners.json exists (prefer data directory version)
         data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
         shorteners_path = Path(__file__).parent / "shorteners.json"
-        
+
         if data_shorteners_path.exists():
             shorteners_path = data_shorteners_path
             logger.info("Using shorteners.json from data directory")
@@ -261,7 +297,7 @@ class EnvironmentSetup:
         # Check for shorteners.json (prefer data directory version)
         data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
         shorteners_path = Path(__file__).parent / "shorteners.json"
-        
+
         if data_shorteners_path.exists():
             shorteners_path = data_shorteners_path
         elif not shorteners_path.exists():
@@ -321,59 +357,6 @@ class EnvironmentSetup:
         except Exception as e:
             self.log_error(f"Failed to setup shortener credentials: {e}")
             return False
-        """Print setup summary."""
-        print("\n" + "="*60)
-        print("📋 ENVIRONMENT SETUP SUMMARY")
-        print("="*60)
-
-        if not self.errors and not self.warnings:
-            print("✅ Setup completed successfully with no errors or warnings!")
-        else:
-            if self.errors:
-                print(f"❌ {len(self.errors)} error(s) found:")
-                for error in self.errors:
-                    print(f"   • {error}")
-
-            if self.warnings:
-                print(f"⚠️  {len(self.warnings)} warning(s):")
-                for warning in self.warnings:
-                    print(f"   • {warning}")
-
-        print("\n" + "="*60)
-
-
-async def main():
-    """Main setup function."""
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    print("🤖 Zoom-Telebot SOC Environment Setup")
-    print("="*50)
-
-    setup = EnvironmentSetup()
-
-    try:
-        success = await setup.setup_environment()
-        setup.print_summary()
-
-        if success:
-            print("\n🎉 Bot is ready to run!")
-            print("   Run: python main.py")
-            return 0
-        else:
-            print("\n❌ Setup failed. Please fix the issues above.")
-            return 1
-
-    except KeyboardInterrupt:
-        print("\n⚠️  Setup interrupted by user")
-        return 1
-    except Exception as e:
-        logger.exception("Unexpected error during setup")
-        print(f"\n❌ Unexpected error: {e}")
-        return 1
 
 
 def check_env_file():
@@ -403,31 +386,53 @@ def check_env_file():
         print("✅ All required environment variables are set")
         return True
 
-    # If some variables are missing, check if .env file exists
-    if env_path.exists():
-        print("⚠️  Some required environment variables are missing")
-        print("   Please check your .env file and ensure all required variables are set:")
-        for var in missing_vars:
-            print(f"   - {var}")
-        print()
-        return False
-
-    # If no .env file and variables missing, guide user but don't fail
-    print("⚠️  .env file not found - using OS environment variables")
-    print("   Note: Make sure required environment variables are set")
-    print()
-    print("   Required variables that are missing:")
+    # If variables are missing, they will be set by set_default_environment()
+    print("⚠️  Some environment variables not set - will use defaults")
+    print("   Missing variables will be configured automatically:")
     for var in missing_vars:
         print(f"   - {var}")
     print()
-    print("   You can set them in:")
-    print("   1. .env file: cp .env.example .env (then edit it)")
-    print("   2. OS environment variables")
-    print("   3. Docker environment variables")
-    print()
-    # Don't return False here - allow setup to continue
-    # The validation will happen later in the setup process
+
+    # Always return True since defaults will be set
     return True
+
+
+async def main():
+    """Main setup function."""
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    print("🤖 Zoom-Telebot SOC Environment Setup")
+    print("="*50)
+
+    # Set default environment variables
+    set_default_environment()
+    print()
+
+    setup = EnvironmentSetup()
+
+    try:
+        success = await setup.setup_environment()
+        setup.print_summary()
+
+        if success:
+            print("\n🎉 Bot is ready to run!")
+            print("   Run: python main.py")
+            return 0
+        else:
+            print("\n❌ Setup failed. Please fix the issues above.")
+            return 1
+
+    except KeyboardInterrupt:
+        print("\n⚠️  Setup interrupted by user")
+        return 1
+    except Exception as e:
+        logger.exception("Unexpected error during setup")
+        print(f"\n❌ Unexpected error: {e}")
+        return 1
 
 
 if __name__ == "__main__":
@@ -438,3 +443,5 @@ if __name__ == "__main__":
     # Run setup
     exit_code = asyncio.run(main())
     sys.exit(exit_code)
+
+
