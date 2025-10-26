@@ -64,7 +64,7 @@ backup_*/
 # Development files
 dev_run.py
 run_dev.py
-dev.py
+# dev.py  # Keep dev.py for development Docker containers
 test_*.py
 tests/
 .pytest_cache/
