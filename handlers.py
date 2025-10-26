@@ -209,12 +209,12 @@ async def cmd_whoami(msg: Message):
     is_owner = (owner is not None and uid == owner)
     logger.info("whoami called by %s (owner_config=%s) -> is_owner=%s", uid, owner, is_owner)
     text = (
-        f"Your Telegram ID: {uid}\n"
-        f"Your username: {username or '-'}\n"
-        f"Configured INITIAL_OWNER_ID: {owner or '-'}\n"
-        f"Is owner: {is_owner}"
+        f"Your Telegram ID: `{uid}`\n"
+        f"Your username: `{username or '-'}`\n"
+        f"Configured INITIAL_OWNER_ID: `{owner or '-'}`\n"
+        f"Is owner: `{is_owner}`"
     )
-    await msg.reply(text)
+    await msg.reply(text, parse_mode="Markdown")
 
 
 @router.message(Command("help"))
@@ -233,7 +233,7 @@ async def cmd_help(msg: Message):
         "<code>/start</code> - Mulai bot dan tampilkan menu utama\n"
         "<code>/help</code> - Tampilkan bantuan ini\n"
         "<code>/about</code> - Tampilkan informasi tentang bot\n"
-        "<code>/zoom &lt;topic&gt; &lt;date&gt; &lt;time&gt;</code> - Buat meeting Zoom cepat\n"
+        "<code>/meet &lt;topic&gt; &lt;date&gt; &lt;time&gt;</code> - Buat meeting Zoom cepat\n"
         "🔹 Support batch: kirim multiple baris untuk membuat banyak meeting sekaligus\n"
         "<code>/zoom_del &lt;zoom_meeting_id&gt;</code> - Hapus meeting Zoom cepat\n"
         "🔹 Support batch: kirim multiple baris untuk menghapus banyak meeting sekaligus\n\n"
@@ -451,7 +451,15 @@ async def cmd_zoom(msg: Message):
                 # Add short URL button for this meeting
                 token = f"{meeting['zoom_id']}_{uuid.uuid4().hex[:8]}"
                 globals().setdefault('TEMP_MEETINGS', {})
-                globals()['TEMP_MEETINGS'][token] = join_url
+                # Store complete meeting info for consistent UX with FSM meeting creation
+                globals()['TEMP_MEETINGS'][token] = {
+                    'url': join_url,
+                    'topic': topic,
+                    'disp_date': disp_date,
+                    'disp_time': disp_time,
+                    'meeting_id': meeting['zoom_id'],
+                    'greeting': greeting
+                }
                 keyboard_buttons.append([
                     InlineKeyboardButton(text=f"🔗 Buat Short URL - {topic}", callback_data=f"shorten:{token}")
                 ])
@@ -934,8 +942,8 @@ async def meeting_time(msg: Message, state: FSMContext):
 
     # prepare confirmation keyboard
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Konfirmasi", callback_data="confirm_create")],
-        [InlineKeyboardButton(text="Batal", callback_data="cancel_create")]
+        [InlineKeyboardButton(text="✅ Konfirmasi", callback_data="confirm_create")],
+        [InlineKeyboardButton(text="❌ Batal", callback_data="cancel_create")]
     ])
 
     # display summary in Indonesian month format
@@ -944,7 +952,7 @@ async def meeting_time(msg: Message, state: FSMContext):
 
     text = (
         "**Konfirmasi pembuatan meeting:**\n"
-        f"� **Topik:** {topic}\n"
+        f"📃 **Topik:** {topic}\n"
         f"⏰ **Waktu (WIB):** {disp}\n\n"
         "Tekan **Konfirmasi** untuk membuat meeting di Zoom, atau **Batal** untuk membatalkan."
     )
@@ -1025,8 +1033,16 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
     # store mapping in-memory (module-level)
     # store mapping in-memory (module-level)
     globals().setdefault('TEMP_MEETINGS', {})
-    globals()['TEMP_MEETINGS'][token] = join
-    logger.debug("Stored temp meeting token=%s -> %s", token, join)
+    # Store complete meeting info for better UX when shortening
+    globals()['TEMP_MEETINGS'][token] = {
+        'url': join,
+        'topic': topic,
+        'disp_date': disp_date,
+        'disp_time': disp_time,
+        'meeting_id': zoom_id,
+        'greeting': greeting
+    }
+    logger.debug("Stored temp meeting token=%s with complete info", token)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔗 Buat Short URL", callback_data=f"shorten:{token}")]
@@ -1040,9 +1056,16 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
 
 @router.callback_query(lambda c: c.data and c.data == 'cancel_create')
 async def cb_cancel_create(c: CallbackQuery, state: FSMContext):
+
+    # show inline buttons: back to main or create new meeting
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main_new")],
+        [InlineKeyboardButton(text="➕ Create New Meeting", callback_data="create_meeting")],
+    ])
+
     # Only allow the user who started the flow to cancel (FSM is per-user but double-check)
     logger.info("User %s cancelled meeting creation", getattr(c.from_user, 'id', None))
-    await _safe_edit_or_fallback(c, "**Pembuatan meeting dibatalkan.**", parse_mode="Markdown")
+    await _safe_edit_or_fallback(c, "**❌ Pembuatan meeting dibatalkan.**", reply_markup=kb, parse_mode="Markdown")
     await state.clear()
     await c.answer("Dibatalkan")
 
@@ -1196,6 +1219,52 @@ async def cb_short_url(c: CallbackQuery, state: FSMContext):
     logger.info("State set to waiting_for_url")
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith('shorten:'))
+async def cb_shorten_meeting(c: CallbackQuery, state: FSMContext):
+    """Handle shorten button for Zoom meeting URLs - directly select provider since URL is known."""
+    logger.info("cb_shorten_meeting called")
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_allowed_to_create(user):
+        await c.answer("Anda belum diizinkan menggunakan fitur Short URL.")
+        return
+
+    # Extract token from callback data
+    data = c.data or ""
+    if not data:
+        await c.answer("Data tidak valid")
+        return
+
+    _, token = data.split(':', 1)
+    if not token:
+        await c.answer("Token tidak valid")
+        return
+
+    # Get meeting info from temp storage
+    meeting_info = TEMP_MEETINGS.get(token)
+    if not meeting_info:
+        await c.answer("Informasi meeting tidak ditemukan. Mungkin sudah kedaluwarsa.")
+        return
+    
+    # Extract URL and store complete info in state
+    join_url = meeting_info.get('url') if isinstance(meeting_info, dict) else meeting_info
+    topic = meeting_info.get('topic', 'Meeting') if isinstance(meeting_info, dict) else 'Meeting'
+    await state.update_data(url=join_url, meeting_info=meeting_info if isinstance(meeting_info, dict) else None)
+
+    # Send new message with meeting topic and provider selection
+    kb = shortener_provider_selection_buttons()
+    text = f"**🔗 Kegiatan {topic} akan di short**\n\nPilih provider shortener:"
+    if c.message:
+        await c.message.reply(text, reply_markup=kb, parse_mode="Markdown")
+    await state.set_state(ShortenerStates.waiting_for_provider)
+    logger.info("State set to waiting_for_provider for meeting URL")
+
+    await c.answer()
+
+
 @router.callback_query(lambda c: c.data and c.data.startswith('select_provider:'))
 async def cb_select_provider(c: CallbackQuery, state: FSMContext):
     data = c.data or ""
@@ -1311,24 +1380,54 @@ async def create_short_url(update_obj, state: FSMContext, provider: str, custom:
         # Clear state
         await state.clear()
         
-        # Show success message
-        from shortener import DynamicShortener
-        shortener = DynamicShortener()
-        provider_config = shortener.providers.get(provider, {})
-        provider_name = provider_config.get('name', provider)
-        
-        text = f"✅ **Short URL Berhasil Dibuat!**\n\n🔗 **URL Asli:** `{url}`\n🔗 **Short URL:** `{short}`\n🔗 **Provider:** {provider_name}"
-        if custom:
-            text += f"\n🔗 **Custom Alias:** `{custom}`"
-        
-        reply_markup = back_to_main_new_buttons()
-        
-        # Handle different update types
-        if hasattr(update_obj, 'message') and update_obj.message:
-            # It's a CallbackQuery
-            await _safe_edit_or_fallback(update_obj, text, reply_markup=reply_markup, parse_mode="Markdown")
+        # Check if this shortening came from meeting creation
+        meeting_info = state_data.get('meeting_info')
+        if meeting_info and isinstance(meeting_info, dict):
+            # This is from meeting creation - show complete meeting info with short URL
+            from shortener import DynamicShortener
+            shortener = DynamicShortener()
+            provider_config = shortener.providers.get(provider, {})
+            provider_name = provider_config.get('name', provider)
+            
+            topic = meeting_info.get('topic', 'Meeting')
+            disp_date = meeting_info.get('disp_date', '')
+            disp_time = meeting_info.get('disp_time', '')
+            greeting = meeting_info.get('greeting', 'Selamat')
+            
+            text = (
+                f"**{greeting} Bapak/Ibu/Rekan-rekan**\n"
+                f"**Berikut disampaikan Kegiatan {topic} pada:**\n\n"
+                f"📆  {disp_date}\n"
+                f"⏰  {disp_time} WIB – selesai\n"
+                f"🔗  {short}\n\n"
+                "**Demikian disampaikan, terimakasih.**"
+            )
+            
+            # Add buttons for additional actions
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔗 Buat Short URL Lain", callback_data="short_url")],
+                [InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main_new")],
+            ])
+            reply_markup = kb
         else:
-            # It's a Message
+            # Regular shortening - show standard success message
+            from shortener import DynamicShortener
+            shortener = DynamicShortener()
+            provider_config = shortener.providers.get(provider, {})
+            provider_name = provider_config.get('name', provider)
+            
+            text = f"✅ **Short URL Berhasil Dibuat!**\n\n🔗 **URL Asli:** `{url}`\n🔗 **Short URL:** `{short}`\n🔗 **Provider:** {provider_name}"
+            if custom:
+                text += f"\n🔗 **Custom Alias:** `{custom}`"
+            
+            reply_markup = back_to_main_new_buttons()
+        
+        # Handle different update types - send new message instead of editing
+        if hasattr(update_obj, 'message') and update_obj.message:
+            # It's a CallbackQuery - reply to the message
+            await update_obj.message.reply(text, reply_markup=reply_markup, parse_mode="Markdown")
+        else:
+            # It's a Message - reply to it
             await update_obj.reply(text, reply_markup=reply_markup, parse_mode="Markdown")
         
     except Exception as e:
@@ -1701,89 +1800,6 @@ async def _log_incoming_callback(c: CallbackQuery):
                      data, user_id, username, chat_id, msg_id)
     except Exception:
         logger.exception("Failed to log incoming callback")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith("confirm_meeting_"))
-async def cb_confirm_meeting(c: CallbackQuery, state: FSMContext):
-    """Handle meeting confirmation callbacks."""
-    if c.from_user is None or c.data is None or c.message is None:
-        await c.answer("Data tidak lengkap")
-        return
-
-    action = c.data.replace("confirm_meeting_", "")  # "yes" or "no"
-    
-    if action == "no":
-        # Cancel meeting creation
-        await state.clear()
-        await c.message.reply("❌ Pembuatan meeting dibatalkan. Klik 'Create Meeting' untuk memulai lagi.", reply_markup=back_to_main_new_buttons())
-        await c.answer()
-        return
-    
-    if action == "yes":
-        # Create the meeting
-        data = await state.get_data()
-        topic = data.get('topic')
-        date_str = data.get('date_str')
-        day = data.get('day')
-        month = data.get('month')
-        year = data.get('year')
-        hour = data.get('hour')
-        minute = data.get('minute')
-
-        if not all([topic, date_str, day, month, year, hour, minute]):
-            await c.message.reply("❌ Data meeting tidak lengkap. Silakan mulai ulang.")
-            await state.clear()
-            await c.answer()
-            return
-
-        # Type assertions for mypy
-        assert isinstance(topic, str)
-        assert isinstance(date_str, str)
-        assert isinstance(day, int)
-        assert isinstance(month, int)
-        assert isinstance(year, int)
-        assert isinstance(hour, int)
-        assert isinstance(minute, int)
-
-        try:
-            # Create datetime
-            start_time = datetime(year, month, day, hour, minute, tzinfo=timezone(timedelta(hours=7)))
-            start_time_iso = start_time.isoformat()
-
-            # Create meeting via Zoom API
-            user_id = 'me'
-            meeting = await zoom_client.create_meeting(user_id=str(user_id), topic=topic, start_time=start_time_iso)
-            logger.info("Meeting created: %s", meeting.get('id') or meeting)
-            
-            # Save to DB
-            zoom_id = meeting.get('id')
-            join_url = meeting.get('join_url') or meeting.get('start_url') or ''
-            if zoom_id:
-                await add_meeting(str(zoom_id), topic, start_time_iso, join_url, c.from_user.id)
-            
-            # Clear state
-            await state.clear()
-            
-            # Success message
-            success_text = f"✅ <b>Meeting Berhasil Dibuat!</b>\n\n📝 <b>Topic:</b> {topic}\n📅 <b>Waktu:</b> {_format_meeting_time(start_time_iso)}\n🔗 <b>Join URL:</b> {join_url}\n\n<i>Meeting ID: {zoom_id}</i>"
-            await c.message.reply(success_text, reply_markup=back_to_main_new_buttons(), parse_mode="HTML")
-            
-            # Add short URL button
-            if join_url:
-                token = f"{zoom_id}_{uuid.uuid4().hex[:8]}"
-                globals().setdefault('TEMP_MEETINGS', {})
-                globals()['TEMP_MEETINGS'][token] = join_url
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔗 Buat Short URL", callback_data=f"shorten:{token}")]
-                ])
-                await c.message.reply("Ingin membuat short URL untuk link meeting?", reply_markup=kb)
-            
-        except Exception as e:
-            logger.exception("Failed to create meeting: %s", e)
-            await c.message.reply(f"❌ Gagal membuat meeting: {e}")
-            await state.clear()
-    
-    await c.answer()
 
 
 @router.message(ShortenerStates.waiting_for_url)
