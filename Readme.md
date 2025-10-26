@@ -86,7 +86,298 @@ python setup.py
 python main.py
 ```
 
-## 🐳 Docker Deployment
+## �️ Development Guide
+
+Panduan lengkap untuk mengembangkan Zoom-Telebot dari local development hingga deployment dengan Docker.
+
+### 📋 Prerequisites
+
+Sebelum mulai development, pastikan Anda memiliki:
+
+- **Python 3.11+**
+- **Git**
+- **Virtual Environment** (recommended)
+- **Telegram Bot Token** dari [@BotFather](https://t.me/botfather)
+- **Zoom App Credentials** dari [Zoom Marketplace](https://marketplace.zoom.us/)
+
+### 1️⃣ Local Development (Basic)
+
+#### Setup Environment
+```bash
+# Clone repository
+git clone https://github.com/rezytijo/Zoom-Telebot.git
+cd Zoom-Telebot
+
+# Create virtual environment
+python -m venv .venv
+# Activate (Windows)
+.venv\Scripts\activate
+# Activate (Linux/Mac)
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy environment template
+cp .env.example .env
+
+# Edit .env dengan credentials Anda
+nano .env  # atau gunakan editor favorit Anda
+```
+
+#### Environment Variables (.env)
+```bash
+# Telegram Configuration
+TELEGRAM_TOKEN=your_bot_token_here
+INITIAL_OWNER_ID=your_telegram_user_id
+INITIAL_OWNER_USERNAME=@your_username
+
+# Zoom Configuration
+ZOOM_CLIENT_ID=your_zoom_client_id
+ZOOM_CLIENT_SECRET=your_zoom_client_secret
+ZOOM_ACCOUNT_ID=your_zoom_account_id
+
+# Optional: URL Shorteners
+SID_ID=your_sid_id
+SID_KEY=your_sid_key
+BITLY_TOKEN=your_bitly_token
+
+# Optional: Database
+DATABASE_URL=sqlite+aiosqlite:///./zoom_telebot.db
+```
+
+#### Run Bot Locally
+```bash
+# Method 1: Using dev.py (Recommended)
+python dev.py setup  # Setup environment
+python dev.py run    # Run bot
+
+# Method 2: Manual setup
+python setup.py      # Setup environment
+python main.py       # Run bot
+
+# Method 3: Development runner (auto-restart)
+python dev_run.py    # Auto-restart on file changes
+```
+
+### 2️⃣ Local Development (Advanced)
+
+#### Development Commands
+```bash
+# Check environment configuration
+python dev.py check
+
+# Run with debug logging
+python dev.py debug
+
+# Test all imports
+python dev.py test
+
+# Show help
+python dev.py help
+```
+
+#### Code Structure Overview
+```
+zoom-telebot/
+├── main.py              # Entry point
+├── dev.py               # Development utilities
+├── setup.py             # Environment setup & validation
+├── config.py            # Configuration management
+├── handlers.py          # Telegram bot handlers
+├── keyboards.py         # Inline keyboard layouts
+├── db.py                # Database operations
+├── zoom.py              # Zoom API integration
+├── shortener.py         # URL shortener services
+├── middleware.py        # Bot middleware
+├── oauth_helper.py      # OAuth utilities
+└── requirements.txt     # Python dependencies
+```
+
+#### Adding New Features
+1. **Handlers**: Tambahkan logic baru di `handlers.py`
+2. **Keyboards**: Design UI di `keyboards.py`
+3. **Database**: Update schema di `db.py`
+4. **Configuration**: Tambahkan env vars di `config.py`
+
+#### Testing Your Changes
+```bash
+# Run unit tests
+python -m pytest tests/ -v
+
+# Test specific file
+python -m pytest tests/test_handlers.py -v
+
+# Run with coverage
+python -m pytest --cov=. --cov-report=html
+```
+
+### 3️⃣ Docker Development
+
+#### Quick Docker Setup
+```bash
+# Clone repository
+git clone https://github.com/rezytijo/Zoom-Telebot.git
+cd Zoom-Telebot
+
+# Copy environment template
+cp .env.example .env
+# Edit .env dengan credentials Anda
+
+# Start development environment
+docker compose up --build
+
+# Atau run in background
+docker compose up -d --build
+```
+
+#### Docker Development Workflow
+```bash
+# View logs
+docker compose logs -f
+
+# Access container shell
+docker compose exec zoom-telebot /bin/bash
+
+# Run tests in container
+docker compose exec zoom-telebot python -m pytest tests/
+
+# Stop services
+docker compose down
+
+# Clean up (remove volumes too)
+docker compose down --volumes --remove-orphans
+```
+
+#### Docker Compose Files Explained
+```
+docker-compose.yml          # Base configuration (production-ready)
+├── docker-compose.override.yml    # Development overrides (auto-loaded)
+├── docker-compose.prod.yml        # Production optimizations
+└── docker-compose.test.yml        # Testing environment
+```
+
+**Key Differences:**
+- **Development**: Source code mounted, debug logging, auto-restart disabled
+- **Production**: Optimized image, security hardening, resource limits
+- **Testing**: Isolated environment, test database, pytest command
+
+### 4️⃣ Development Best Practices
+
+#### Code Quality
+```bash
+# Format code
+black .
+
+# Sort imports
+isort .
+
+# Lint code
+flake8 .
+
+# Type checking
+mypy .
+```
+
+#### Git Workflow
+```bash
+# Create feature branch
+git checkout -b feature/new-feature
+
+# Make changes
+# ... code changes ...
+
+# Commit changes
+git add .
+git commit -m "feat: add new feature"
+
+# Push to branch
+git push origin feature/new-feature
+
+# Create Pull Request
+# ... GitHub PR ...
+```
+
+#### Debugging Tips
+```bash
+# Enable debug logging
+export LOG_LEVEL=DEBUG
+python dev.py debug
+
+# Check database
+sqlite3 zoom_telebot.db
+.schema
+SELECT * FROM users LIMIT 5;
+
+# Test API endpoints
+curl -X POST http://localhost:8080/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"test": "data"}'
+```
+
+### 5️⃣ Deployment Options
+
+#### Option 1: Docker Production
+```bash
+# Build production image
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Check logs
+docker compose logs -f
+```
+
+#### Option 2: Portainer (Recommended)
+1. Import `docker-compose.yml` ke Portainer
+2. Set environment variables di Portainer UI
+3. Setup webhook untuk auto-deployment
+4. GitHub Actions akan trigger update otomatis
+
+#### Option 3: Manual Server Deployment
+```bash
+# On your server
+git clone https://github.com/rezytijo/Zoom-Telebot.git
+cd Zoom-Telebot
+
+# Setup environment
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Configure environment variables
+export TELEGRAM_TOKEN=your_token
+export INITIAL_OWNER_ID=your_id
+# ... other vars ...
+
+# Run with process manager (pm2, systemd, etc.)
+python main.py
+```
+
+### 6️⃣ Troubleshooting
+
+#### Common Issues
+```bash
+# Bot not responding
+python dev.py check  # Check environment
+docker compose logs  # Check container logs
+
+# Database issues
+rm zoom_telebot.db
+python setup.py      # Reinitialize database
+
+# Permission issues
+sudo chown -R $USER:$USER .
+docker compose down --volumes
+docker compose up -d --build
+```
+
+#### Getting Help
+- 📖 Check [Test-Flow.md](Test-Flow.md) for detailed testing procedures
+- 🐛 Open issues on GitHub
+- 💬 Join our Telegram channel for community support
+
+---
+
+## �🐳 Docker Deployment
 
 ### Prerequisites
 - Docker Engine 20.10+
