@@ -412,17 +412,22 @@ def check_env_file():
         print()
         return False
 
-    # If no .env file and variables missing, guide user
-    print("⚠️  .env file not found and some required environment variables are missing!")
-    print("   You can either:")
-    print("   1. Create .env file: cp .env.example .env (then edit it)")
-    print("   2. Set environment variables directly in your OS/shell")
+    # If no .env file and variables missing, guide user but don't fail
+    print("⚠️  .env file not found - using OS environment variables")
+    print("   Note: Make sure required environment variables are set")
     print()
     print("   Required variables that are missing:")
     for var in missing_vars:
         print(f"   - {var}")
     print()
-    return False
+    print("   You can set them in:")
+    print("   1. .env file: cp .env.example .env (then edit it)")
+    print("   2. OS environment variables")
+    print("   3. Docker environment variables")
+    print()
+    # Don't return False here - allow setup to continue
+    # The validation will happen later in the setup process
+    return True
 
 
 if __name__ == "__main__":
