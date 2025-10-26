@@ -9,13 +9,13 @@ Untuk deployment yang mudah dan konsisten, gunakan Docker:
 
 #### 1. Install Docker Desktop
 - **Windows**: Download dari [docker.com](https://www.docker.com/products/docker-desktop)
-- **Linux**: `sudo apt update && sudo apt install docker.io docker-compose`
+- **Linux**: `sudo apt update && sudo apt install docker.io docker-compose-plugin`
 - **macOS**: Download dari [docker.com](https://www.docker.com/products/docker-desktop)
 
 #### 2. Verifikasi Instalasi
 ```bash
 docker --version
-docker-compose --version
+docker compose version
 ```
 
 ### Local Development Setup
@@ -84,6 +84,123 @@ python setup.py
 
 # Run bot
 python main.py
+```
+
+## 🐳 Docker Deployment
+
+### Prerequisites
+- Docker Engine 20.10+
+- Docker Compose V2 (`docker compose` command)
+
+### Environment Setup
+```bash
+# Clone repository
+git clone https://github.com/rezytijo/Zoom-Telebot.git
+cd Zoom-Telebot
+
+# Copy environment template
+cp .env.example .env
+
+# Edit .env dengan konfigurasi Anda
+nano .env
+```
+
+### Development Environment
+```bash
+# Build dan start development environment
+docker compose up --build
+
+# Atau run di background
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+```
+
+### Production Environment
+```bash
+# Build untuk production
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Atau gunakan Makefile
+make prod-build
+make prod-up
+make prod-logs
+```
+
+### Portainer Deployment (Recommended)
+Untuk deployment dengan Portainer:
+
+1. **Import Stack** di Portainer dengan file `docker-compose.yml`
+2. **Environment Variables**:
+   - Set semua variabel di bagian Environment Portainer
+   - Atau mount file `.env` sebagai volume
+3. **Webhook Integration**:
+   - Setup webhook di Portainer stack
+   - GitHub Actions akan otomatis trigger update setelah build
+
+### Docker Commands Reference
+
+```bash
+# Build image
+docker compose build
+
+# Start services
+docker compose up -d
+
+# Stop services
+docker compose down
+
+# View logs
+docker compose logs -f
+
+# Restart services
+docker compose restart
+
+# Shell access ke container
+docker compose exec zoom-telebot /bin/bash
+
+# Update services (pull latest image)
+docker compose pull
+docker compose up -d
+
+# Clean up
+docker compose down --volumes --remove-orphans
+docker system prune -f
+```
+
+### Troubleshooting Docker
+
+#### Container tidak start
+```bash
+# Check logs
+docker compose logs zoom-telebot
+
+# Check environment
+docker compose exec zoom-telebot python setup.py
+
+# Debug mode
+docker compose exec zoom-telebot python dev.py debug
+```
+
+#### Permission issues
+```bash
+# Fix permissions
+sudo chown -R $USER:$USER .
+docker compose down --volumes
+docker compose up -d --build
+```
+
+#### Port conflicts
+```bash
+# Check used ports
+docker compose ps
+netstat -tulpn | grep :80
+
+# Change ports di docker-compose.yml jika perlu
 ```
 
 ## ⚙️ Detailed Setup
@@ -198,17 +315,17 @@ cp .env.example .env
 # Edit .env dengan credentials Anda
 
 # 2. Build dan run dengan Docker Compose
-docker-compose up -d
+docker compose up -d
 
 # 3. Check logs
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ### Development dengan Docker
 
 ```bash
 # Development mode
-docker-compose --profile dev up
+docker compose --profile dev up
 
 # Atau gunakan Makefile
 make dev-up
@@ -219,7 +336,7 @@ make dev-logs
 
 ```bash
 # Production mode
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 # Atau gunakan Makefile
 make prod-build
@@ -231,22 +348,22 @@ make prod-logs
 
 ```bash
 # Build image
-docker-compose build
+docker compose build
 
 # Start services
-docker-compose up -d
+docker compose up -d
 
 # Stop services
-docker-compose down
+docker compose down
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Restart services
-docker-compose restart
+docker compose restart
 
 # Shell access
-docker-compose exec zoom-telebot /bin/bash
+docker compose exec zoom-telebot /bin/bash
 ```
 
 ### Makefile Commands

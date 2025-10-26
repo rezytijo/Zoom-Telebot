@@ -63,3 +63,24 @@ jobs:
           else
             echo "Success: Dev image rezytijo/zoom-telebot:$DEV_TAG is available on Docker Hub"
           fi
+
+      - name: Trigger Portainer Stack Update
+        run: |
+          echo "🔄 Triggering Portainer stack update via webhook..."
+          WEBHOOK_URL="https://docker.primall.my.id/api/stacks/webhooks/85781723-51a0-455e-a538-c5a72cc31724"
+          
+          # Make POST request to Portainer webhook
+          RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Actions-Webhook")
+          
+          # Check response
+          if [ "$RESPONSE" -eq 200 ] || [ "$RESPONSE" -eq 204 ]; then
+            echo "✅ Portainer webhook triggered successfully (HTTP $RESPONSE)"
+            echo "🚀 Stack update initiated in Portainer"
+          else
+            echo "❌ Failed to trigger Portainer webhook (HTTP $RESPONSE)"
+            echo "Response body:"
+            cat response.txt 2>/dev/null || echo "No response body"
+            exit 1
+          fi
