@@ -2,6 +2,12 @@ import aiosqlite
 from typing import Optional, List, Dict
 from config import settings
 import logging
+import os
+import zipfile
+import json
+from datetime import datetime
+import tempfile
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -443,3 +449,260 @@ async def get_shortlink_stats() -> Dict:
             'failed': failed,
             'by_provider': by_provider
         }
+
+
+# Backup and Restore Functions
+
+async def backup_database() -> str:
+    """Create SQL dump of the database.
+
+    Returns path to the SQL dump file.
+    """
+    logger.info("Creating database backup")
+    dump_file = tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False)
+
+    try:
+        async with aiosqlite.connect(settings.db_path) as db:
+            # Get all table names
+            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = await cursor.fetchall()
+
+            dump_file.write("-- Zoom-Telebot Database Backup\n")
+            dump_file.write(f"-- Created at: {datetime.now().isoformat()}\n\n")
+
+            for table_name, in tables:
+                if table_name.startswith('sqlite_'):
+                    continue  # Skip SQLite internal tables
+
+                logger.debug("Dumping table: %s", table_name)
+
+                # Write table schema
+                cursor = await db.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+                schema = await cursor.fetchone()
+                if schema and schema[0]:
+                    dump_file.write(f"{schema[0]};\n\n")
+
+                # Write table data
+                cursor = await db.execute(f"SELECT * FROM {table_name}")
+                rows = await cursor.fetchall()
+                rows_list = list(rows)  # Convert to list for len()
+
+                if rows_list:
+                    # Get column names
+                    column_names = [description[0] for description in cursor.description]
+                    columns_str = ', '.join(column_names)
+
+                    dump_file.write(f"INSERT INTO {table_name} ({columns_str}) VALUES\n")
+
+                    row_count = len(rows_list)
+                    for i, row in enumerate(rows_list):
+                        # Escape single quotes and handle None values
+                        values = []
+                        for value in row:
+                            if value is None:
+                                values.append('NULL')
+                            elif isinstance(value, str):
+                                values.append(f"'{value.replace(chr(39), chr(39) + chr(39))}'")
+                            else:
+                                values.append(str(value))
+
+                        values_str = ', '.join(values)
+                        dump_file.write(f"({values_str})")
+
+                        if i < row_count - 1:
+                            dump_file.write(",\n")
+                        else:
+                            dump_file.write(";\n")
+
+                    dump_file.write("\n")
+
+        dump_file.close()
+        logger.info("Database backup created: %s", dump_file.name)
+        return dump_file.name
+
+    except Exception as e:
+        dump_file.close()
+        os.unlink(dump_file.name)
+        logger.exception("Failed to create database backup")
+        raise
+
+
+def backup_shorteners() -> str:
+    """Create backup of shorteners.json file.
+
+    Returns path to the backup file.
+    """
+    logger.info("Creating shorteners backup")
+    backup_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+
+    try:
+        with open('shorteners.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        json.dump(data, backup_file, indent=2, ensure_ascii=False)
+        backup_file.close()
+
+        logger.info("Shorteners backup created: %s", backup_file.name)
+        return backup_file.name
+
+    except Exception as e:
+        backup_file.close()
+        os.unlink(backup_file.name)
+        logger.exception("Failed to create shorteners backup")
+        raise
+
+
+def create_backup_zip(db_dump_path: str, shorteners_path: str) -> str:
+    """Create ZIP file containing database dump and shorteners backup.
+
+    Returns path to the ZIP file with timestamp naming: DD-MM-YYYY-HH-MM.zip
+    """
+    now = datetime.now()
+    zip_filename = f"{now.day:02d}-{now.month:02d}-{now.year}-{now.hour:02d}-{now.minute:02d}.zip"
+    zip_path = os.path.join(tempfile.gettempdir(), zip_filename)
+
+    logger.info("Creating backup ZIP: %s", zip_path)
+
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Add database dump
+            zipf.write(db_dump_path, arcname='database_backup.sql')
+            # Add shorteners backup
+            zipf.write(shorteners_path, arcname='shorteners_backup.json')
+            # Add metadata
+            metadata = {
+                'created_at': now.isoformat(),
+                'version': '1.0',
+                'description': 'Zoom-Telebot backup containing database and shorteners configuration'
+            }
+            zipf.writestr('backup_info.json', json.dumps(metadata, indent=2))
+
+        logger.info("Backup ZIP created successfully: %s", zip_path)
+        return zip_path
+
+    except Exception as e:
+        if os.path.exists(zip_path):
+            os.unlink(zip_path)
+        logger.exception("Failed to create backup ZIP")
+        raise
+
+
+async def restore_database(sql_dump_path: str) -> Dict[str, int]:
+    """Restore database from SQL dump file.
+
+    Returns statistics about restored data.
+    """
+    logger.info("Restoring database from: %s", sql_dump_path)
+
+    stats = {'tables_created': 0, 'rows_inserted': 0}
+
+    try:
+        # Read SQL dump
+        with open(sql_dump_path, 'r', encoding='utf-8') as f:
+            sql_content = f.read()
+
+        # Split into individual statements (basic approach)
+        statements = []
+        current_statement = ""
+        in_string = False
+        string_char = None
+
+        for char in sql_content:
+            if not in_string:
+                if char in ("'", '"'):
+                    in_string = True
+                    string_char = char
+                elif char == ';':
+                    if current_statement.strip():
+                        statements.append(current_statement.strip())
+                    current_statement = ""
+                    continue
+            else:
+                if char == string_char and (not current_statement or current_statement[-1] != '\\'):
+                    in_string = False
+                    string_char = None
+
+            current_statement += char
+
+        # Execute statements
+        async with aiosqlite.connect(settings.db_path) as db:
+            for statement in statements:
+                if statement.strip() and not statement.strip().startswith('--'):
+                    try:
+                        await db.execute(statement)
+                        if statement.upper().startswith('CREATE TABLE'):
+                            stats['tables_created'] += 1
+                        elif statement.upper().startswith('INSERT'):
+                            stats['rows_inserted'] += 1
+                    except Exception as e:
+                        logger.warning("Failed to execute statement: %s - %s", statement[:100], e)
+
+            await db.commit()
+
+        logger.info("Database restore completed: %s", stats)
+        return stats
+
+    except Exception as e:
+        logger.exception("Failed to restore database")
+        raise
+
+
+def restore_shorteners(backup_path: str) -> bool:
+    """Restore shorteners.json from backup file.
+
+    Returns True if successful.
+    """
+    logger.info("Restoring shorteners from: %s", backup_path)
+
+    try:
+        with open(backup_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Validate JSON structure
+        if 'providers' not in data:
+            raise ValueError("Invalid shorteners backup: missing 'providers' key")
+
+        # Backup current file
+        if os.path.exists('shorteners.json'):
+            shutil.copy2('shorteners.json', 'shorteners.json.backup')
+
+        # Write new file
+        with open('shorteners.json', 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        logger.info("Shorteners restore completed successfully")
+        return True
+
+    except Exception as e:
+        logger.exception("Failed to restore shorteners")
+        # Restore backup if it exists
+        if os.path.exists('shorteners.json.backup'):
+            shutil.move('shorteners.json.backup', 'shorteners.json')
+        raise
+
+
+def extract_backup_zip(zip_path: str, extract_to: Optional[str] = None) -> Dict[str, str]:
+    """Extract backup ZIP file.
+
+    Returns dict with paths to extracted files.
+    """
+    if extract_to is None:
+        extract_to = tempfile.mkdtemp()
+
+    logger.info("Extracting backup ZIP: %s to %s", zip_path, extract_to)
+
+    extracted_files = {}
+
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zipf:
+            zipf.extractall(extract_to)
+
+            for filename in zipf.namelist():
+                extracted_files[filename] = os.path.join(extract_to, filename)
+
+        logger.info("Backup ZIP extracted successfully: %s", extracted_files)
+        return extracted_files
+
+    except Exception as e:
+        logger.exception("Failed to extract backup ZIP")
+        raise

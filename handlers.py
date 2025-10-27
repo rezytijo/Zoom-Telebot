@@ -1,11 +1,11 @@
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Document
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from typing import Optional
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_meeting_status
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip
 from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, all_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create
@@ -17,6 +17,9 @@ from datetime import datetime, date, time, timedelta, timezone
 import uuid
 from shortener import make_short
 import shlex
+import os
+import shutil
+import tempfile
 
 router = Router()
 # in-memory temp mapping token -> original url (short-lived)
@@ -31,6 +34,17 @@ class MeetingStates(StatesGroup):
     date = State()
     time = State()
     confirm = State()
+
+
+class ShortenerStates(StatesGroup):
+    waiting_for_url = State()
+    waiting_for_provider = State()
+    waiting_for_custom_choice = State()
+    waiting_for_custom_url = State()
+
+
+class RestoreStates(StatesGroup):
+    waiting_for_file = State()
 
 
 def extract_zoom_meeting_id(url: str) -> Optional[str]:
@@ -211,7 +225,6 @@ async def cmd_whoami(msg: Message):
     text = (
         f"Your Telegram ID: `{uid}`\n"
         f"Your username: `{username or '-'}`\n"
-        f"Configured INITIAL_OWNER_ID: `{owner or '-'}`\n"
         f"Is owner: `{is_owner}`"
     )
     await msg.reply(text, parse_mode="Markdown")
@@ -245,7 +258,9 @@ async def cmd_help(msg: Message):
             "<b>Perintah Admin (khusus Owner/Admin):</b>\n"
             "<code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
             "<code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
-            "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus)\n\n"
+            "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus)\n"
+            "<code>/backup</code> - Buat backup database dan konfigurasi shorteners\n"
+            "<code>/restore</code> - Restore dari file backup ZIP\n\n"
         )
 
     help_text += (
@@ -596,86 +611,7 @@ class ShortenerStates(StatesGroup):
     waiting_for_custom_url = State()
 
 
-@router.message(F.state == None)
-async def handle_any_message(msg: Message):
-    # guard: ensure from_user exists
-    if msg.from_user is None:
-        # cannot proceed without sender info
-        return
 
-    logger.debug("Received message from %s: %s", getattr(msg.from_user, 'id', None), getattr(msg, 'text', None))
-    # if user not in DB, add as pending and reply with template
-    user = await get_user_by_telegram_id(msg.from_user.id)
-    if not user:
-        # If this is the configured owner, automatically add as owner/whitelisted
-        if settings.owner_id is not None and msg.from_user.id == settings.owner_id:
-            logger.info("Auto-whitelisting configured owner %s", msg.from_user.id)
-            # ensure a row exists
-            await add_pending_user(msg.from_user.id, msg.from_user.username)
-            # set status and role to owner
-            await update_user_status(msg.from_user.id, 'whitelisted', 'owner')
-            # re-read user
-            user = await get_user_by_telegram_id(msg.from_user.id)
-        else:
-            logger.info("Registering pending user %s", msg.from_user.id)
-            await add_pending_user(msg.from_user.id, msg.from_user.username)
-            text = (
-                "Anda belum terdaftar, kirim data ini ke admin untuk dilakukan whitelist :\n"
-                f"Username Telegram : ```{msg.from_user.username or '-'}```\n"
-                f"User ID Telegram : ```{msg.from_user.id}```\n"
-            )
-            await msg.reply(text)
-            return
-
-    # If whitelisted or owner, show UI (centralized check)
-    if is_allowed_to_create(user):
-        logger.debug("User %s allowed actions (status=%s)", msg.from_user.id, (user.get('status') if user else None))
-        await msg.answer("Pilih aksi:", reply_markup=user_action_buttons())
-    elif user and user.get('status') == 'banned':
-        await msg.reply("Anda dibanned dari menggunakan bot ini.")
-    else:
-        await msg.reply("Permintaan Anda sedang menunggu persetujuan.")
-
-@router.message(F.text == '/register_list')
-async def cmd_register_list(msg: Message):
-    # only owner or admin can call
-    if msg.from_user is None:
-        return
-
-    if settings.owner_id and msg.from_user.id != settings.owner_id:
-        await msg.reply("Hanya owner yang dapat mengakses daftar registrasi.")
-        return
-
-    pendings = await list_pending_users()
-    # send one message per pending user and include owner action buttons
-    for u in pendings:
-        logger.debug("register_list pending entry: %s", u)
-        text = f"ID: {u['telegram_id']}\nUsername: {u['username'] or '-'}\nStatus: {u['status']}\nRole: {u['role']}"
-        kb = pending_user_owner_buttons(u['telegram_id'], is_banned=(u['status']=='banned'))
-        await msg.reply(text, reply_markup=kb)
-
-
-@router.message(Command("all_users"))
-async def cmd_all_users(msg: Message):
-    """Show all registered users (owner only)."""
-    if msg.from_user is None:
-        return
-
-    # only owner may call this
-    if settings.owner_id is not None and msg.from_user.id != settings.owner_id:
-        await msg.reply("Hanya owner yang dapat mengakses daftar user.")
-        return
-
-    users = await list_all_users()
-    if not users:
-        await msg.reply("Tidak ada user terdaftar.")
-        return
-
-    # send one message per user with action buttons
-    for u in users:
-        text = f"ID: {u['telegram_id']}\nUsername: {u['username'] or '-'}\nStatus: {u['status']}\nRole: {u['role']}"
-        kb = all_users_buttons(u['telegram_id'])
-        await msg.reply(text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('accept:'))
@@ -1115,13 +1051,24 @@ async def cb_list_meetings(c: CallbackQuery):
             
             # Format time for custom display
             try:
+                # Parse datetime dengan handling berbagai format
                 if start_time.endswith('Z'):
-                    dt = datetime.fromisoformat(start_time[:-1])
+                    # Format UTC dengan Z, parse sebagai UTC
+                    dt = datetime.fromisoformat(start_time[:-1]).replace(tzinfo=timezone.utc)
                 else:
+                    # Format ISO dengan timezone atau tanpa timezone
                     dt = datetime.fromisoformat(start_time)
-                
-                wib_tz = timezone(timedelta(hours=7))
-                dt_wib = dt.replace(tzinfo=timezone.utc).astimezone(wib_tz)
+
+                # Jika datetime sudah memiliki timezone info, gunakan langsung
+                # Jika tidak, anggap sebagai UTC dan konversi ke WIB
+                if dt.tzinfo is None:
+                    # Tidak ada timezone info, anggap UTC
+                    wib_tz = timezone(timedelta(hours=7))
+                    dt_wib = dt.replace(tzinfo=timezone.utc).astimezone(wib_tz)
+                else:
+                    # Sudah memiliki timezone info, konversi ke WIB jika perlu
+                    wib_tz = timezone(timedelta(hours=7))
+                    dt_wib = dt.astimezone(wib_tz)
                 
                 days_id = {
                     0: 'Senin', 1: 'Selasa', 2: 'Rabu', 3: 'Kamis',
@@ -1325,10 +1272,9 @@ async def cb_set_custom_url(c: CallbackQuery, state: FSMContext):
 
     await c.answer(f'Membuat short URL dengan custom alias "{custom_url}"...')
     try:
-        # Create short URL with custom alias
-        from shortener import DynamicShortener
-        shortener = DynamicShortener()
-        provider = shortener.get_provider_by_url(url)
+        # Get provider from state data
+        state_data = await state.get_data()
+        provider = state_data.get('provider')
         if not provider:
             await c.answer("Provider tidak ditemukan. Silakan mulai ulang.")
             return
@@ -1690,6 +1636,147 @@ async def cmd_zoom_del(msg: Message):
         summary += f"\n... dan {len(results) - 10} hasil lainnya"
     
     await msg.reply(summary, parse_mode="HTML")
+
+
+@router.message(Command("backup"))
+async def cmd_backup(msg: Message, bot: Bot):
+    """Create backup of database and shorteners configuration (owner/admin only)."""
+    if msg.from_user is None:
+        return
+
+    # Only owner can backup
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await msg.reply("❌ Hanya owner yang dapat membuat backup.")
+        return
+
+    await msg.reply("🔄 Membuat backup database dan konfigurasi... Mohon tunggu.")
+
+    try:
+          # Create backup
+          zip_path = create_backup_zip(await backup_database(), backup_shorteners())
+
+          # Send the backup file
+          from aiogram.types import FSInputFile
+          backup_file = FSInputFile(zip_path)
+          await msg.reply_document(
+              document=backup_file,
+              filename=os.path.basename(zip_path),
+              caption="✅ Backup berhasil dibuat!\n\nFile berisi:\n• Database SQL dump\n• Konfigurasi shorteners\n• Metadata backup"
+          )
+
+          # Clean up after a short delay to ensure file is sent
+          import asyncio
+          await asyncio.sleep(1)  # Wait 1 second for file to be sent
+          os.unlink(zip_path)
+          logger.info("Backup sent successfully to owner")
+
+    except Exception as e:
+        logger.exception("Failed to create backup: %s", e)
+        await msg.reply(f"❌ Gagal membuat backup: {e}")
+@router.message(Command("restore"))
+async def cmd_restore(msg: Message, state: FSMContext):
+    """Restore database and shorteners from backup file (owner/admin only)."""
+    if msg.from_user is None:
+        return
+
+    # Only owner can restore
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await msg.reply("❌ Hanya owner yang dapat melakukan restore.")
+        return
+
+    await msg.reply(
+        "📦 **Mode Restore Backup**\n\n"
+        "Kirim file ZIP backup yang ingin direstore.\n\n"
+        "⚠️ **PERINGATAN:** Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
+        "Pastikan file backup valid dan dari sumber terpercaya.",
+        parse_mode="Markdown"
+    )
+
+    await state.set_state(RestoreStates.waiting_for_file)
+
+
+@router.message(RestoreStates.waiting_for_file)
+async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
+    """Handle the uploaded backup file for restore."""
+    if msg.from_user is None:
+        return
+
+    # Double-check owner permission
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await state.clear()
+        return
+
+    if not msg.document:
+        await msg.reply("❌ Silakan kirim file ZIP backup yang valid.")
+        return
+
+    # Check if it's a ZIP file
+    if not msg.document.file_name or not msg.document.file_name.lower().endswith('.zip'):
+        await msg.reply("❌ File harus berformat ZIP.")
+        return
+
+    await msg.reply("🔄 Memproses file backup... Mohon tunggu.")
+
+    try:
+        # Download the file
+        file_info = await bot.get_file(msg.document.file_id)
+        if not file_info.file_path:
+            await msg.reply("❌ Gagal mendapatkan path file.")
+            await state.clear()
+            return
+
+        temp_zip = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+        await bot.download_file(file_info.file_path, temp_zip.name)
+        temp_zip.close()
+
+        # Extract and validate backup
+        extracted_files = extract_backup_zip(temp_zip.name)
+
+        required_files = ['database_backup.sql', 'shorteners_backup.json']
+        missing_files = [f for f in required_files if f not in extracted_files]
+
+        if missing_files:
+            await msg.reply(f"❌ File backup tidak valid. File yang hilang: {', '.join(missing_files)}")
+            # Clean up
+            os.unlink(temp_zip.name)
+            for f in extracted_files.values():
+                if os.path.exists(f):
+                    os.unlink(f)
+            await state.clear()
+            return
+
+        # Perform restore
+        await msg.reply("🔄 Memulihkan database...")
+        db_stats = await restore_database(extracted_files['database_backup.sql'])
+
+        await msg.reply("🔄 Memulihkan konfigurasi shorteners...")
+        shorteners_success = restore_shorteners(extracted_files['shorteners_backup.json'])
+
+        # Clean up
+        os.unlink(temp_zip.name)
+        for f in extracted_files.values():
+            if os.path.exists(f):
+                os.unlink(f)
+
+        await state.clear()
+
+        # Send success message
+        success_msg = (
+            "✅ **Restore Berhasil!**\n\n"
+            f"📊 **Database:** {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
+            f"🔗 **Shorteners:** {'Berhasil' if shorteners_success else 'Gagal'}\n\n"
+            "⚠️ Bot akan restart untuk menerapkan perubahan."
+        )
+
+        await msg.reply(success_msg, parse_mode="Markdown")
+
+        logger.info("Restore completed successfully by owner")
+
+    except Exception as e:
+        logger.exception("Failed to restore backup: %s", e)
+        await msg.reply(f"❌ Gagal melakukan restore: {e}")
+        await state.clear()
+
 
 # Generic loggers placed at end so they don't prevent specific handlers from being
 # registered earlier in this module. These log incoming commands and callback data
