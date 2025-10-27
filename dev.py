@@ -56,19 +56,6 @@ def test_imports():
 
     return success
 
-def check_env():
-    """Check environment configuration."""
-    print("🔍 Checking environment...")
-
-    env_file = PROJECT_ROOT / ".env"
-    if not env_file.exists():
-        print("❌ .env file not found")
-        print("   Copy .env.example to .env and configure it")
-        return False
-
-    print("✅ .env file exists")
-    return True
-
 def show_help():
     """Show help information."""
     print("🤖 Zoom-Telebot SOC Development Commands")
@@ -82,7 +69,6 @@ def show_help():
     print("  run      - Run bot with normal logging")
     print("  debug    - Run bot with debug logging")
     print("  test     - Test Python imports")
-    print("  check    - Check environment configuration")
     print("  help     - Show this help")
     print()
     print("EXAMPLES:")
@@ -103,10 +89,6 @@ def main():
 
     print("🤖 Zoom-Telebot SOC Development Runner")
     print("=" * 50)
-
-    # Check environment first
-    if not check_env():
-        return 1
 
     if action == 'help' or action == '--help' or action == '-h':
         show_help()
@@ -129,9 +111,6 @@ def main():
 
     elif action == 'test':
         return 0 if test_imports() else 1
-
-    elif action == 'check':
-        return 0 if check_env() else 1
 
     else:
         print(f"❌ Unknown command: {action}")

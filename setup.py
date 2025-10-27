@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Setup script for Zoom-Telebot SOC
-Handles initial environment setup including:
+Zoom-Telebot SOC Initial Setup Script
+Handles complete bot initialization including:
+- Environment variable validation
 - Database initialization
 - Owner user setup
-- Shortener configuration validation
-- Environment validation
+- Shortener configuration
 """
 
 import asyncio
@@ -23,11 +23,16 @@ from config import settings
 from db import init_db, add_pending_user, update_user_status, get_user_by_telegram_id
 import shortener
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
-class EnvironmentSetup:
-    """Handles environment setup and validation for the bot."""
+class BotSetup:
+    """Handles complete bot setup and initialization."""
 
     def __init__(self):
         self.errors = []
@@ -43,52 +48,60 @@ class EnvironmentSetup:
         self.warnings.append(message)
         logger.warning(message)
 
-    def validate_telegram_config(self) -> bool:
-        """Validate Telegram bot configuration."""
-        logger.info("Validating Telegram configuration...")
+    def validate_environment_variables(self) -> bool:
+        """Validate all required environment variables."""
+        logger.info("🔍 Validating environment variables...")
 
-        if not settings.bot_token:
-            self.log_error("TELEGRAM_TOKEN is required but not set")
+        # Required environment variables with descriptions
+        required_vars = {
+            'TELEGRAM_TOKEN': 'Telegram bot token from @BotFather',
+            'INITIAL_OWNER_ID': 'Telegram user ID of the bot owner',
+            'ZOOM_CLIENT_ID': 'Zoom OAuth client ID',
+            'ZOOM_CLIENT_SECRET': 'Zoom OAuth client secret',
+            'DATABASE_URL': 'Database connection URL'
+        }
+
+        missing_vars = []
+        for var, description in required_vars.items():
+            if not os.getenv(var):
+                missing_vars.append(f"{var} ({description})")
+
+        if missing_vars:
+            self.log_error("Missing required environment variables:")
+            for var in missing_vars:
+                logger.error(f"  - {var}")
             return False
 
-        if not settings.owner_id:
-            self.log_error("INITIAL_OWNER_ID is required but not set")
+        # Validate Telegram token format
+        token = os.getenv('TELEGRAM_TOKEN')
+        if token and ':' not in token:
+            self.log_error("TELEGRAM_TOKEN format appears invalid (should contain ':')")
             return False
 
-        # Validate token format (basic check)
-        if not settings.bot_token or ':' not in settings.bot_token:
-            self.log_error("TELEGRAM_TOKEN format appears invalid")
-            return False
+        # Optional warnings for recommended variables
+        optional_vars = {
+            'ZOOM_ACCOUNT_ID': 'Zoom account ID for better integration',
+            'INITIAL_OWNER_USERNAME': 'Owner username for better UX',
+            'SID_ID': 'S.id service credentials',
+            'SID_KEY': 'S.id service credentials',
+            'BITLY_TOKEN': 'Bitly service credentials'
+        }
 
-        logger.info("✅ Telegram configuration valid")
-        return True
+        for var, description in optional_vars.items():
+            if not os.getenv(var):
+                self.log_warning(f"Optional variable {var} not set: {description}")
 
-    def validate_zoom_config(self) -> bool:
-        """Validate Zoom integration configuration."""
-        logger.info("Validating Zoom configuration...")
-
-        if not settings.zoom_client_id:
-            self.log_error("ZOOM_CLIENT_ID is required but not set")
-            return False
-
-        if not settings.zoom_client_secret:
-            self.log_error("ZOOM_CLIENT_SECRET is required but not set")
-            return False
-
-        if not settings.zoom_account_id:
-            self.log_warning("ZOOM_ACCOUNT_ID not set - some features may not work")
-
-        logger.info("✅ Zoom configuration valid")
+        logger.info("✅ Environment variables validation passed")
         return True
 
     def validate_shortener_config(self) -> bool:
-        """Validate shortener configuration."""
-        logger.info("Validating shortener configuration...")
+        """Validate shortener configuration file."""
+        logger.info("🔍 Validating shortener configuration...")
 
-        # Check if shorteners.json exists (prefer data directory version)
-        data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
+        # Check if shorteners.json exists
         shorteners_path = Path(__file__).parent / "shorteners.json"
-        
+        data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
+
         if data_shorteners_path.exists():
             shorteners_path = data_shorteners_path
             logger.info("Using shorteners.json from data directory")
@@ -121,147 +134,59 @@ class EnvironmentSetup:
 
         return True
 
-    def validate_database_config(self) -> bool:
-        """Validate database configuration."""
-        logger.info("Validating database configuration...")
-
-        if not settings.database_url:
-            self.log_error("DATABASE_URL is required but not set")
-            return False
-
-        # Check if database file exists or can be created
-        db_path = Path(settings.db_path)
-        db_dir = db_path.parent
-
-        try:
-            db_dir.mkdir(parents=True, exist_ok=True)
-            # Try to create/touch the database file
-            db_path.touch(exist_ok=True)
-            logger.info(f"✅ Database path valid: {db_path.absolute()}")
-        except Exception as e:
-            self.log_error(f"Cannot create database file at {db_path}: {e}")
-            return False
-
-        return True
-
-    async def initialize_owner(self) -> bool:
-        """Initialize owner user in database."""
-        logger.info("Initializing owner user...")
-
-        if not settings.owner_id:
-            self.log_error("Cannot initialize owner: INITIAL_OWNER_ID not set")
-            return False
-
-        try:
-            # Check if owner already exists
-            existing_owner = await get_user_by_telegram_id(settings.owner_id)
-
-            if existing_owner:
-                logger.info(f"✅ Owner user already exists: {existing_owner}")
-                # Ensure owner has correct role and status
-                if existing_owner['role'] != 'owner' or existing_owner['status'] != 'whitelisted':
-                    await update_user_status(settings.owner_id, 'whitelisted', 'owner')
-                    logger.info("✅ Owner user updated with correct role and status")
-            else:
-                # Add owner as pending first, then approve
-                await add_pending_user(settings.owner_id, settings.owner_username)
-                await update_user_status(settings.owner_id, 'whitelisted', 'owner')
-                logger.info(f"✅ Owner user initialized: ID={settings.owner_id}, Username={settings.owner_username}")
-
-            return True
-
-        except Exception as e:
-            self.log_error(f"Failed to initialize owner: {e}")
-            return False
-
     async def initialize_database(self) -> bool:
         """Initialize database schema."""
-        logger.info("Initializing database schema...")
+        logger.info("🗄️  Initializing database...")
 
         try:
             await init_db()
-            logger.info("✅ Database schema initialized")
+            logger.info("✅ Database schema initialized successfully")
             return True
         except Exception as e:
             self.log_error(f"Failed to initialize database: {e}")
             return False
 
-    def validate_environment(self) -> bool:
-        """Validate entire environment configuration."""
-        logger.info("🔍 Starting environment validation...")
+    async def setup_owner_user(self) -> bool:
+        """Setup the bot owner user."""
+        logger.info("👤 Setting up owner user...")
 
-        validations = [
-            self.validate_telegram_config,
-            self.validate_zoom_config,
-            self.validate_shortener_config,
-            self.validate_database_config,
-        ]
+        owner_id = os.getenv('INITIAL_OWNER_ID')
+        owner_username = os.getenv('INITIAL_OWNER_USERNAME', f"user_{owner_id}")
 
-        all_passed = True
-        for validation in validations:
-            if not validation():
-                all_passed = False
-
-        if all_passed:
-            logger.info("✅ All environment validations passed")
-        else:
-            logger.error("❌ Some environment validations failed")
-
-        return all_passed
-
-    async def setup_environment(self) -> bool:
-        """Complete environment setup."""
-        logger.info("🚀 Starting environment setup...")
-
-        # Validate environment first
-        if not self.validate_environment():
-            logger.error("❌ Environment validation failed. Please fix the issues above.")
+        if not owner_id:
+            self.log_error("INITIAL_OWNER_ID not set")
             return False
 
-        # Initialize database
-        if not await self.initialize_database():
+        try:
+            # Check if owner already exists
+            existing_owner = await get_user_by_telegram_id(int(owner_id))
+
+            if existing_owner:
+                logger.info(f"✅ Owner user already exists: {existing_owner}")
+                # Ensure owner has correct role and status
+                if existing_owner['role'] != 'owner' or existing_owner['status'] != 'whitelisted':
+                    await update_user_status(int(owner_id), 'whitelisted', 'owner')
+                    logger.info("✅ Owner user updated with correct role and status")
+            else:
+                # Add owner as pending first, then approve
+                await add_pending_user(int(owner_id), owner_username)
+                await update_user_status(int(owner_id), 'whitelisted', 'owner')
+                logger.info(f"✅ Owner user initialized: ID={owner_id}, Username={owner_username}")
+
+            return True
+
+        except Exception as e:
+            self.log_error(f"Failed to setup owner user: {e}")
             return False
 
-        # Initialize owner
-        if not await self.initialize_owner():
-            return False
+    async def configure_shorteners(self) -> bool:
+        """Configure shortener services with credentials from environment."""
+        logger.info("🔗 Configuring shortener services...")
 
-        # Setup shortener credentials
-        if not await self.setup_shortener_credentials():
-            return False
-
-        logger.info("✅ Environment setup completed successfully!")
-        return True
-
-    def print_summary(self):
-        """Print setup summary."""
-        print("\n" + "="*60)
-        print("📋 ENVIRONMENT SETUP SUMMARY")
-        print("="*60)
-
-        if not self.errors and not self.warnings:
-            print("✅ Setup completed successfully with no errors or warnings!")
-        else:
-            if self.errors:
-                print(f"❌ {len(self.errors)} error(s) found:")
-                for error in self.errors:
-                    print(f"   • {error}")
-
-            if self.warnings:
-                print(f"⚠️  {len(self.warnings)} warning(s):")
-                for warning in self.warnings:
-                    print(f"   • {warning}")
-
-        print("\n" + "="*60)
-
-    async def setup_shortener_credentials(self) -> bool:
-        """Setup shortener credentials from environment variables."""
-        logger.info("Setting up shortener credentials...")
-
-        # Check for shorteners.json (prefer data directory version)
-        data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
+        # Check for shorteners.json
         shorteners_path = Path(__file__).parent / "shorteners.json"
-        
+        data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
+
         if data_shorteners_path.exists():
             shorteners_path = data_shorteners_path
         elif not shorteners_path.exists():
@@ -274,36 +199,43 @@ class EnvironmentSetup:
 
             updated = False
 
-            # Update S.id credentials
+            # Configure S.id credentials
             if 'sid' in config['providers']:
                 sid_config = config['providers']['sid']
-                if settings.sid_id and settings.sid_key:
+                sid_id = os.getenv('SID_ID')
+                sid_key = os.getenv('SID_KEY')
+
+                if sid_id and sid_key:
                     if 'auth' not in sid_config:
                         sid_config['auth'] = {'type': 'header', 'headers': {}}
 
-                    sid_config['auth']['headers']['X-Auth-Id'] = settings.sid_id
-                    sid_config['auth']['headers']['X-Auth-Key'] = settings.sid_key
+                    sid_config['auth']['headers']['X-Auth-Id'] = sid_id
+                    sid_config['auth']['headers']['X-Auth-Key'] = sid_key
                     updated = True
-                    logger.info("✅ S.id credentials updated from environment")
+                    logger.info("✅ S.id credentials configured from environment")
                 else:
-                    self.log_warning("S.id credentials not found in environment variables")
+                    self.log_warning("S.id credentials (SID_ID, SID_KEY) not found in environment")
 
-            # Update Bitly credentials if needed
+            # Configure Bitly credentials
             if 'bitly' in config['providers']:
                 bitly_config = config['providers']['bitly']
-                if settings.bitly_token:
-                    # Bitly typically uses Bearer token in Authorization header
+                bitly_token = os.getenv('BITLY_TOKEN')
+
+                if bitly_token:
                     if 'headers' not in bitly_config:
                         bitly_config['headers'] = {}
-                    bitly_config['headers']['Authorization'] = f'Bearer {settings.bitly_token}'
+                    bitly_config['headers']['Authorization'] = f'Bearer {bitly_token}'
                     updated = True
-                    logger.info("✅ Bitly credentials updated from environment")
+                    logger.info("✅ Bitly credentials configured from environment")
+                else:
+                    self.log_warning("Bitly token (BITLY_TOKEN) not found in environment")
 
+            # Save updated configuration
             if updated:
                 try:
                     with open(shorteners_path, 'w', encoding='utf-8') as f:
                         json.dump(config, f, indent=2, ensure_ascii=False)
-                    logger.info("✅ shorteners.json updated with credentials")
+                    logger.info("✅ Shortener configuration updated and saved")
                 except PermissionError:
                     # If we can't write to the original file, try to copy it to data directory
                     data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
@@ -311,19 +243,102 @@ class EnvironmentSetup:
                         data_shorteners_path.parent.mkdir(exist_ok=True)
                         with open(data_shorteners_path, 'w', encoding='utf-8') as f:
                             json.dump(config, f, indent=2, ensure_ascii=False)
-                        logger.info("✅ shorteners.json copied to data directory with updated credentials")
+                        logger.info("✅ Shortener configuration copied to data directory")
                     except Exception as copy_error:
-                        self.log_error(f"Failed to copy shorteners.json to data directory: {copy_error}")
+                        self.log_error(f"Failed to save shortener configuration: {copy_error}")
                         return False
+            else:
+                logger.info("ℹ️  No shortener credentials to update")
 
             return True
 
         except Exception as e:
-            self.log_error(f"Failed to setup shortener credentials: {e}")
+            self.log_error(f"Failed to configure shorteners: {e}")
             return False
-        """Print setup summary."""
+
+    def print_configuration_summary(self):
+        """Print current configuration summary."""
+        print("\n" + "="*70)
+        print("📋 BOT CONFIGURATION SUMMARY")
+        print("="*70)
+
+        # Environment variables
+        print("\n🔧 Environment Variables:")
+        env_vars = [
+            ('TELEGRAM_TOKEN', 'Telegram Bot Token'),
+            ('INITIAL_OWNER_ID', 'Owner User ID'),
+            ('INITIAL_OWNER_USERNAME', 'Owner Username'),
+            ('ZOOM_CLIENT_ID', 'Zoom Client ID'),
+            ('ZOOM_CLIENT_SECRET', 'Zoom Client Secret'),
+            ('ZOOM_ACCOUNT_ID', 'Zoom Account ID'),
+            ('DATABASE_URL', 'Database URL'),
+            ('DEFAULT_MODE', 'Bot Mode'),
+            ('LOG_LEVEL', 'Log Level'),
+        ]
+
+        for var, desc in env_vars:
+            value = os.getenv(var, 'Not set')
+            if var in ['TELEGRAM_TOKEN', 'ZOOM_CLIENT_SECRET', 'SID_KEY', 'BITLY_TOKEN']:
+                # Mask sensitive values
+                if value != 'Not set' and len(value) > 10:
+                    value = value[:6] + '...' + value[-4:]
+            status = "✅" if value != 'Not set' else "❌"
+            print(f"  {status} {var}: {value} ({desc})")
+
+        # Database info
+        db_url = os.getenv('DATABASE_URL', '')
+        if 'sqlite' in db_url:
+            db_path = db_url.replace('sqlite+aiosqlite:///', '')
+            print(f"\n🗄️  Database: SQLite at {db_path}")
+        else:
+            print(f"\n🗄️  Database: {db_url}")
+
+        print("\n" + "="*70)
+
+    async def run_initial_setup(self) -> bool:
+        """Run complete initial setup process."""
+        print("🤖 Zoom-Telebot SOC Initial Setup")
+        print("="*50)
+        print("This script will initialize your bot with the following steps:")
+        print("1. Validate environment variables")
+        print("2. Validate shortener configuration")
+        print("3. Initialize database")
+        print("4. Setup owner user")
+        print("5. Configure shortener services")
+        print()
+
+        # Step 1: Validate environment variables
+        logger.info("Step 1: Validating environment variables...")
+        if not self.validate_environment_variables():
+            return False
+
+        # Step 2: Validate shortener config
+        logger.info("Step 2: Validating shortener configuration...")
+        if not self.validate_shortener_config():
+            return False
+
+        # Step 3: Initialize database
+        logger.info("Step 3: Initializing database...")
+        if not await self.initialize_database():
+            return False
+
+        # Step 4: Setup owner user
+        logger.info("Step 4: Setting up owner user...")
+        if not await self.setup_owner_user():
+            return False
+
+        # Step 5: Configure shorteners
+        logger.info("Step 5: Configuring shortener services...")
+        if not await self.configure_shorteners():
+            return False
+
+        logger.info("✅ Initial setup completed successfully!")
+        return True
+
+    def print_setup_summary(self):
+        """Print setup completion summary."""
         print("\n" + "="*60)
-        print("📋 ENVIRONMENT SETUP SUMMARY")
+        print("🎉 SETUP COMPLETION SUMMARY")
         print("="*60)
 
         if not self.errors and not self.warnings:
@@ -342,29 +357,91 @@ class EnvironmentSetup:
         print("\n" + "="*60)
 
 
+def print_environment_template():
+    """Print environment variables template."""
+    print("� Environment Variables Template:")
+    print("="*50)
+    print("""
+# ================================
+# Database & Default Mode Configuration
+DATABASE_URL=sqlite+aiosqlite:///./zoom_telebot.db
+DEFAULT_MODE=polling
+
+# ========================================
+# Combined SOC Telegram Bot Configuration
+# ========================================
+
+# Telegram Bot Configuration
+TELEGRAM_TOKEN=your-telegram-bot-token-here
+INITIAL_OWNER_ID=your-telegram-user-id-here
+INITIAL_OWNER_USERNAME=@your-telegram-username
+
+# Zoom Integration Configuration (Server-to-Server OAuth)
+ZOOM_ACCOUNT_ID=your-zoom-account-id
+ZOOM_CLIENT_ID=your-zoom-client-id
+ZOOM_CLIENT_SECRET=your-zoom-client-secret
+
+# Short URL Service Configuration
+# S.id Configuration (recommended for Indonesian users)
+SID_ID=your-sid-id-here
+SID_KEY=your-sid-key-here
+
+# Bitly Configuration (optional)
+BITLY_TOKEN=your-bitly-token-here
+
+# Logging Configuration
+LOG_LEVEL=INFO
+LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+
+# ========================================
+# Shortener Configuration
+# ========================================
+# Shortener providers are configured in shorteners.json file
+# To add new providers, edit shorteners.json (no code changes needed!)
+#
+# Example new provider format in shorteners.json:
+# "newprovider": {
+#   "name": "New Provider",
+#   "description": "Description of the provider",
+#   "enabled": true,
+#   "api_url": "https://api.example.com/shorten",
+#   "method": "post",
+#   "headers": {"Content-Type": "application/json"},
+#   "body": {"url": "{url}"},
+#   "response_type": "json",
+#   "success_check": "status==200",
+#   "url_extract": "response.get('short_url')"
+# }
+""")
+
+
 async def main():
     """Main setup function."""
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    if len(sys.argv) > 1 and sys.argv[1] == '--template':
+        print_environment_template()
+        return 0
 
-    print("🤖 Zoom-Telebot SOC Environment Setup")
-    print("="*50)
-
-    setup = EnvironmentSetup()
+    setup = BotSetup()
 
     try:
-        success = await setup.setup_environment()
-        setup.print_summary()
+        # Print configuration summary first
+        setup.print_configuration_summary()
+
+        # Run initial setup
+        success = await setup.run_initial_setup()
+        setup.print_setup_summary()
 
         if success:
-            print("\n🎉 Bot is ready to run!")
-            print("   Run: python main.py")
+            print("\n🎉 Bot setup completed successfully!")
+            print("\n🚀 You can now run the bot with:")
+            print("   python main.py                    # Production mode")
+            print("   python dev.py run                # Development mode")
+            print("   docker compose up               # Docker mode")
+            print("\n📖 For more information, see README.md")
             return 0
         else:
-            print("\n❌ Setup failed. Please fix the issues above.")
+            print("\n❌ Setup failed. Please fix the issues above and run again.")
+            print("💡 Tip: Run 'python setup.py --template' to see environment variables template")
             return 1
 
     except KeyboardInterrupt:
@@ -376,60 +453,8 @@ async def main():
         return 1
 
 
-def check_env_file():
-    """Check if environment variables are configured (either from .env or OS)."""
-    import os
-    from pathlib import Path
-
-    env_path = Path(".env")
-    env_example_path = Path(".env.example")
-
-    # Required environment variables
-    required_vars = [
-        'TELEGRAM_TOKEN',
-        'INITIAL_OWNER_ID',
-        'ZOOM_CLIENT_ID',
-        'ZOOM_CLIENT_SECRET',
-        'DATABASE_URL'
-    ]
-
-    # Check if all required variables are set
-    missing_vars = []
-    for var in required_vars:
-        if not os.getenv(var):
-            missing_vars.append(var)
-
-    if not missing_vars:
-        print("✅ All required environment variables are set")
-        return True
-
-    # If some variables are missing, check if .env file exists
-    if env_path.exists():
-        print("⚠️  Some required environment variables are missing")
-        print("   Please check your .env file and ensure all required variables are set:")
-        for var in missing_vars:
-            print(f"   - {var}")
-        print()
-        return False
-
-    # If no .env file and variables missing, guide user
-    print("⚠️  .env file not found and some required environment variables are missing!")
-    print("   You can either:")
-    print("   1. Create .env file: cp .env.example .env (then edit it)")
-    print("   2. Set environment variables directly in your OS/shell")
-    print()
-    print("   Required variables that are missing:")
-    for var in missing_vars:
-        print(f"   - {var}")
-    print()
-    return False
-
-
 if __name__ == "__main__":
-    # Check if .env exists
-    if not check_env_file():
-        sys.exit(1)
-
-    # Run setup
     exit_code = asyncio.run(main())
     sys.exit(exit_code)
+
+
