@@ -86,17 +86,7 @@ python setup.py
 python main.py
 ```
 
-## �️ Development Guide
-
-Panduan lengkap untuk mengembangkan Zoom-Telebot dari local development hingga deployment dengan Docker.
-
-### 📋 Prerequisites
-
-Sebelum mulai development, pastikan Anda memiliki:
-
-- **Python 3.11+**
-- **Git**
-- **Virtual Environment** (recommended)
+## 🐳 Docker Deployment
 - **Telegram Bot Token** dari [@BotFather](https://t.me/botfather)
 - **Zoom App Credentials** dari [Zoom Marketplace](https://marketplace.zoom.us/)
 
@@ -377,7 +367,7 @@ docker compose up -d --build
 
 ---
 
-## �🐳 Docker Deployment
+## 🐳 Docker Deployment
 
 ### Prerequisites
 - Docker Engine 20.10+
