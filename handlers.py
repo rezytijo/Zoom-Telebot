@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from typing import Optional
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip
 from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, all_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create
@@ -258,7 +258,8 @@ async def cmd_help(msg: Message):
             "<b>Perintah Admin (khusus Owner/Admin):</b>\n"
             "<code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
             "<code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
-            "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus)\n"
+            "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus & expired)\n"
+            "<code>/check_expired</code> - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
             "<code>/backup</code> - Buat backup database dan konfigurasi shorteners\n"
             "<code>/restore</code> - Restore dari file backup ZIP\n\n"
         )
@@ -504,6 +505,7 @@ async def cmd_sync_meetings(msg: Message):
             f"➕ Ditambahkan: {stats['added']}\n"
             f"🔄 Diupdate: {stats['updated']}\n"
             f"🗑️ Ditandai Dihapus: {stats['deleted']}\n"
+            f"⏰ Ditandai Expired: {stats.get('expired', 0)}\n"
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Sistem otomatis mensinkronkan setiap 30 menit dan saat startup.</i>"
         )
@@ -511,6 +513,34 @@ async def cmd_sync_meetings(msg: Message):
     except Exception as e:
         logger.exception("Manual sync failed: %s", e)
         await msg.reply(f"❌ <b>Gagal melakukan sinkronisasi:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+
+@router.message(Command("check_expired"))
+async def cmd_check_expired(msg: Message):
+    """Manually check and update expired meetings (owner only)."""
+    if msg.from_user is None:
+        return
+
+    # Only owner can run expiry check
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await msg.reply("Hanya owner yang dapat menjalankan check expired meetings.")
+        return
+
+    await msg.reply("🔍 Memeriksa meeting yang sudah expired...")
+
+    try:
+        stats = await update_expired_meetings()
+        text = (
+            "✅ <b>Pemeriksaan expired selesai!</b>\n\n"
+            f"📊 <b>Statistik:</b>\n"
+            f"⏰ Meeting ditandai expired: {stats['expired']}\n"
+            f"❌ Error: {stats['errors']}\n\n"
+            "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai expired.</i>"
+        )
+        await msg.reply(text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    except Exception as e:
+        logger.exception("Manual expiry check failed: %s", e)
+        await msg.reply(f"❌ <b>Gagal memeriksa expired meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
 
 
 @router.message(Command("start"))
@@ -1049,6 +1079,9 @@ async def cb_list_meetings(c: CallbackQuery):
             # Get creator username
             creator_username = await _get_username_from_telegram_id(created_by)
             
+            # Extract Zoom Meeting ID
+            zoom_meeting_id = extract_zoom_meeting_id(join_url) or "N/A"
+            
             # Format time for custom display
             try:
                 # Parse datetime dengan handling berbagai format
@@ -1091,35 +1124,25 @@ async def cb_list_meetings(c: CallbackQuery):
             except Exception:
                 formatted_time_custom = "Waktu tidak tersedia"
             
-            text += f"<b>{i}. {topic}</b>\n"
-            text += f"👤 Dibuat oleh: {creator_username}\n"
+            # Clean display format
+            text += f"📌 <b>{topic}</b>\n"
+            text += f"🆔 <code>{zoom_meeting_id}</code>\n"
+            text += f"👤 Dibuat oleh: @{creator_username}\n"
             text += f"🕛 {formatted_time_custom}\n"
-            text += f"🔗 Link Zoom: {join_url}\n"
+            text += f"🔗 {join_url}\n"
             
-            # Display shortlinks with detailed info
+            # Display shortlinks in a cleaner format
             if shortlinks:
                 text += f"🔗 <b>Shortlinks ({len(shortlinks)}):</b>\n"
                 for j, sl in enumerate(shortlinks, 1):
                     provider_name = sl.get('provider', 'Unknown').upper()
                     short_url = sl.get('short_url', 'N/A')
                     custom_alias = sl.get('custom_alias')
-                    created_at = sl.get('created_at', '')
-                    
-                    # Format creation time
-                    try:
-                        if created_at:
-                            created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                            created_wib = created_dt.astimezone(timezone(timedelta(hours=7)))
-                            created_str = created_wib.strftime("%d/%m/%y %H:%M")
-                        else:
-                            created_str = "N/A"
-                    except:
-                        created_str = "N/A"
                     
                     text += f"  {j}. {provider_name}: {short_url}"
                     if custom_alias:
-                        text += f" (custom: {custom_alias})"
-                    text += f" - {created_str}\n"
+                        text += f" (alias: {custom_alias})"
+                    text += "\n"
             
             text += "\n"
         

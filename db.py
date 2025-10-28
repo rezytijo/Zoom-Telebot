@@ -235,24 +235,29 @@ async def update_meeting_status(zoom_meeting_id: str, status: str):
 
 async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
     """
-    Sync meetings from Zoom API to database.
-    Returns dict with counts: {'added': int, 'updated': int, 'deleted': int, 'errors': int}
+    Sync meetings from Zoom API to database and update expired meetings.
+    Returns dict with counts: {'added': int, 'updated': int, 'deleted': int, 'expired': int, 'errors': int}
     """
-    logger.info("Starting Zoom meetings sync")
-    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'errors': 0}
-    
+    logger.info("Starting Zoom meetings sync with expiry check")
+    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'expired': 0, 'errors': 0}
+
     try:
+        from datetime import datetime, timezone
+
+        # Get current time in UTC for expiry check
+        now = datetime.now(timezone.utc)
+
         # Get meetings from Zoom
         zoom_data = await zoom_client.list_upcoming_meetings('me')
         zoom_meetings = zoom_data.get('meetings', [])
         zoom_ids = {str(meeting.get('id', '')) for meeting in zoom_meetings if meeting.get('id')}
         logger.info("Found %d active meetings in Zoom", len(zoom_ids))
-        
+
         # Get existing active meetings from DB
         existing_meetings = await list_meetings()
         existing_active = {m['zoom_meeting_id']: m for m in existing_meetings if m['status'] == 'active'}
         logger.info("Found %d active meetings in DB", len(existing_active))
-        
+
         async with aiosqlite.connect(settings.db_path) as db:
             # Mark meetings that exist in DB but not in Zoom as deleted
             for zoom_id, meeting in existing_active.items():
@@ -264,7 +269,7 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                     except Exception as e:
                         logger.exception("Failed to mark meeting %s as deleted: %s", zoom_id, e)
                         stats['errors'] += 1
-            
+
             # Process meetings from Zoom
             for meeting in zoom_meetings:
                 zoom_id = str(meeting.get('id', ''))
@@ -272,11 +277,11 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                     logger.warning("Meeting without ID: %s", meeting)
                     stats['errors'] += 1
                     continue
-                
+
                 topic = meeting.get('topic', 'No Topic')
                 start_time = meeting.get('start_time', '')
                 join_url = meeting.get('join_url', '')
-                
+
                 if zoom_id not in existing_active:
                     # Add new meeting
                     try:
@@ -308,14 +313,107 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                         except Exception as e:
                             logger.exception("Failed to update meeting %s: %s", zoom_id, e)
                             stats['errors'] += 1
-            
+
+            # Check for expired meetings among all active meetings in DB
+            cursor = await db.execute("""
+                SELECT zoom_meeting_id, topic, start_time
+                FROM meetings
+                WHERE status = 'active' AND start_time IS NOT NULL
+            """)
+            active_meetings = await cursor.fetchall()
+
+            for zoom_id, topic, start_time_str in active_meetings:
+                try:
+                    # Parse start_time - handle different formats
+                    if start_time_str.endswith('Z'):
+                        # ISO format with Z (UTC)
+                        start_time = datetime.fromisoformat(start_time_str[:-1]).replace(tzinfo=timezone.utc)
+                    else:
+                        # Try parsing as ISO format, assume UTC if no timezone
+                        start_time = datetime.fromisoformat(start_time_str)
+                        if start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+
+                    # Check if meeting has expired (current time > start time)
+                    if now > start_time:
+                        await db.execute(
+                            "UPDATE meetings SET status = 'expired', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                            (zoom_id,)
+                        )
+                        stats['expired'] += 1
+                        logger.debug("Marked meeting %s (%s) as expired", zoom_id, topic)
+
+                except Exception as e:
+                    logger.warning("Failed to process meeting %s: %s", zoom_id, e)
+                    stats['errors'] += 1
+
             await db.commit()
-        
-        logger.info("Zoom sync completed: added=%d, updated=%d, deleted=%d, errors=%d", stats['added'], stats['updated'], stats['deleted'], stats['errors'])
+
+        logger.info("Zoom sync with expiry check completed: added=%d, updated=%d, deleted=%d, expired=%d, errors=%d",
+                   stats['added'], stats['updated'], stats['deleted'], stats['expired'], stats['errors'])
         return stats
-        
+
     except Exception as e:
         logger.exception("Failed to sync meetings from Zoom: %s", e)
+        stats['errors'] += 1
+        return stats
+
+
+async def update_expired_meetings() -> Dict[str, int]:
+    """
+    Update status of meetings that have passed their start time to 'expired'.
+    Returns dict with counts: {'expired': int, 'errors': int}
+    """
+    logger.info("Checking for expired meetings")
+    stats = {'expired': 0, 'errors': 0}
+
+    try:
+        from datetime import datetime, timezone
+
+        # Get current time in UTC
+        now = datetime.now(timezone.utc)
+
+        async with aiosqlite.connect(settings.db_path) as db:
+            # Get all active meetings
+            cursor = await db.execute("""
+                SELECT zoom_meeting_id, topic, start_time
+                FROM meetings
+                WHERE status = 'active' AND start_time IS NOT NULL
+            """)
+            active_meetings = await cursor.fetchall()
+
+            for zoom_id, topic, start_time_str in active_meetings:
+                try:
+                    # Parse start_time - handle different formats
+                    if start_time_str.endswith('Z'):
+                        # ISO format with Z (UTC)
+                        start_time = datetime.fromisoformat(start_time_str[:-1]).replace(tzinfo=timezone.utc)
+                    else:
+                        # Try parsing as ISO format, assume UTC if no timezone
+                        start_time = datetime.fromisoformat(start_time_str)
+                        if start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+
+                    # Check if meeting has expired (current time > start time)
+                    if now > start_time:
+                        await db.execute(
+                            "UPDATE meetings SET status = 'expired', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                            (zoom_id,)
+                        )
+                        stats['expired'] += 1
+                        logger.debug("Marked meeting %s (%s) as expired", zoom_id, topic)
+
+                except Exception as e:
+                    logger.warning("Failed to process meeting %s: %s", zoom_id, e)
+                    stats['errors'] += 1
+
+            await db.commit()
+
+        logger.info("Expired meetings update completed: expired=%d, errors=%d", stats['expired'], stats['errors'])
+        return stats
+
+    except Exception as e:
+        logger.exception("Failed to update expired meetings: %s", e)
         stats['errors'] += 1
         return stats
 
