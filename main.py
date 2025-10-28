@@ -18,7 +18,7 @@ async def background_sync_meetings():
     while True:
         try:
             logger.info("Running scheduled meeting sync")
-            stats = await sync_meetings_from_zoom_with_expiry_check(zoom_client)
+            stats = await sync_meetings_from_zoom(zoom_client)
             logger.info("Meeting sync completed: %s", stats)
         except Exception as e:
             logger.exception("Error in background meeting sync: %s", e)
@@ -33,7 +33,7 @@ async def on_startup(bot: Bot):
     # Run initial sync on startup
     logger.info("Running initial meeting sync on startup...")
     try:
-        stats = await sync_meetings_from_zoom_with_expiry_check(zoom_client)
+        stats = await sync_meetings_from_zoom(zoom_client)
         logger.info("Initial meeting sync completed: %s", stats)
     except Exception as e:
         logger.exception("Error in initial meeting sync: %s", e)

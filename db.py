@@ -29,7 +29,6 @@ CREATE_SQL = [
         topic TEXT,
         start_time TEXT,
         join_url TEXT,
-        short_url TEXT,
         status TEXT DEFAULT 'active', -- active, deleted, expired
         created_by TEXT, -- INTEGER (telegram_id) for bot-created, "CreatedFromZoomApp" for zoom-created
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -160,13 +159,12 @@ async def update_meeting_short_url_by_join_url(join_url: str, short_url: str):
         await db.commit()
     logger.info("Meeting with join_url %s short URL updated", join_url)
 
-
 async def list_meetings() -> List[Dict]:
     logger.debug("list_meetings called")
     async with aiosqlite.connect(settings.db_path) as db:
-        cur = await db.execute("SELECT id, zoom_meeting_id, topic, start_time, join_url, short_url, status, created_by, created_at, updated_at FROM meetings ORDER BY created_at DESC")
+        cur = await db.execute("SELECT id, zoom_meeting_id, topic, start_time, join_url, status, created_by, created_at, updated_at FROM meetings ORDER BY created_at DESC")
         rows = await cur.fetchall()
-        return [dict(id=r[0], zoom_meeting_id=r[1], topic=r[2], start_time=r[3], join_url=r[4], short_url=r[5], status=r[6], created_by=r[7], created_at=r[8], updated_at=r[9]) for r in rows]
+        return [dict(id=r[0], zoom_meeting_id=r[1], topic=r[2], start_time=r[3], join_url=r[4], status=r[5], created_by=r[6], created_at=r[7], updated_at=r[8]) for r in rows]
 
 
 async def list_meetings_with_shortlinks() -> List[Dict]:
@@ -175,9 +173,9 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
     async with aiosqlite.connect(settings.db_path) as db:
         # Get meetings
         meetings_cur = await db.execute("""
-            SELECT id, zoom_meeting_id, topic, start_time, join_url, short_url, status, created_by, created_at, updated_at 
-            FROM meetings 
-            WHERE status = 'active' 
+            SELECT id, zoom_meeting_id, topic, start_time, join_url, status, created_by, created_at, updated_at
+            FROM meetings
+            WHERE status = 'active'
             ORDER BY created_at DESC
         """)
         meetings_rows = await meetings_cur.fetchall()
@@ -185,16 +183,15 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
         meetings = []
         for r in meetings_rows:
             meeting = dict(
-                id=r[0], 
-                zoom_meeting_id=r[1], 
-                topic=r[2], 
-                start_time=r[3], 
-                join_url=r[4], 
-                short_url=r[5], 
-                status=r[6], 
-                created_by=r[7], 
-                created_at=r[8], 
-                updated_at=r[9]
+                id=r[0],
+                zoom_meeting_id=r[1],
+                topic=r[2],
+                start_time=r[3],
+                join_url=r[4],
+                status=r[5],
+                created_by=r[6],
+                created_at=r[7],
+                updated_at=r[8]
             )
             
             # Get shortlinks for this meeting
@@ -253,10 +250,11 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
         zoom_ids = {str(meeting.get('id', '')) for meeting in zoom_meetings if meeting.get('id')}
         logger.info("Found %d active meetings in Zoom", len(zoom_ids))
 
-        # Get existing active meetings from DB
+        # Get existing meetings from DB (all statuses)
         existing_meetings = await list_meetings()
+        existing_by_id = {m['zoom_meeting_id']: m for m in existing_meetings}
         existing_active = {m['zoom_meeting_id']: m for m in existing_meetings if m['status'] == 'active'}
-        logger.info("Found %d active meetings in DB", len(existing_active))
+        logger.info("Found %d total meetings in DB (%d active)", len(existing_by_id), len(existing_active))
 
         async with aiosqlite.connect(settings.db_path) as db:
             # Mark meetings that exist in DB but not in Zoom as deleted
@@ -283,17 +281,31 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                 join_url = meeting.get('join_url', '')
 
                 if zoom_id not in existing_active:
-                    # Add new meeting
-                    try:
-                        await db.execute(
-                            "INSERT INTO meetings (zoom_meeting_id, topic, start_time, join_url, status, created_by) VALUES (?, ?, ?, ?, 'active', 'CreatedFromZoomApp')",
-                            (zoom_id, topic, start_time, join_url),
-                        )
-                        stats['added'] += 1
-                        logger.debug("Added meeting %s: %s", zoom_id, topic)
-                    except Exception as e:
-                        logger.exception("Failed to add meeting %s: %s", zoom_id, e)
-                        stats['errors'] += 1
+                    # Check if meeting exists but is not active (deleted/expired)
+                    if zoom_id in existing_by_id:
+                        # Reactivate existing meeting
+                        try:
+                            await db.execute(
+                                "UPDATE meetings SET topic = ?, start_time = ?, join_url = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                                (topic, start_time, join_url, zoom_id),
+                            )
+                            stats['updated'] += 1
+                            logger.debug("Reactivated meeting %s: %s", zoom_id, topic)
+                        except Exception as e:
+                            logger.exception("Failed to reactivate meeting %s: %s", zoom_id, e)
+                            stats['errors'] += 1
+                    else:
+                        # Add new meeting
+                        try:
+                            await db.execute(
+                                "INSERT INTO meetings (zoom_meeting_id, topic, start_time, join_url, status, created_by) VALUES (?, ?, ?, ?, 'active', 'CreatedFromZoomApp')",
+                                (zoom_id, topic, start_time, join_url),
+                            )
+                            stats['added'] += 1
+                            logger.debug("Added meeting %s: %s", zoom_id, topic)
+                        except Exception as e:
+                            logger.exception("Failed to add meeting %s: %s", zoom_id, e)
+                            stats['errors'] += 1
                 else:
                     # Update existing meeting if needed
                     existing = existing_active[zoom_id]
