@@ -39,6 +39,7 @@ def all_users_buttons(telegram_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗑️ Delete User", callback_data=f"delete_user:{telegram_id}")],
         [InlineKeyboardButton(text="🔄 Change Role", callback_data=f"change_role:{telegram_id}")],
         [InlineKeyboardButton(text="📊 Change Status", callback_data=f"change_status:{telegram_id}")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke List User", callback_data="all_users:0")],
     ])
     return kb
 

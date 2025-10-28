@@ -29,7 +29,6 @@ CREATE_SQL = [
         topic TEXT,
         start_time TEXT,
         join_url TEXT,
-        short_url TEXT,
         status TEXT DEFAULT 'active', -- active, deleted, expired
         created_by TEXT, -- INTEGER (telegram_id) for bot-created, "CreatedFromZoomApp" for zoom-created
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -160,13 +159,12 @@ async def update_meeting_short_url_by_join_url(join_url: str, short_url: str):
         await db.commit()
     logger.info("Meeting with join_url %s short URL updated", join_url)
 
-
 async def list_meetings() -> List[Dict]:
     logger.debug("list_meetings called")
     async with aiosqlite.connect(settings.db_path) as db:
-        cur = await db.execute("SELECT id, zoom_meeting_id, topic, start_time, join_url, short_url, status, created_by, created_at, updated_at FROM meetings ORDER BY created_at DESC")
+        cur = await db.execute("SELECT id, zoom_meeting_id, topic, start_time, join_url, status, created_by, created_at, updated_at FROM meetings ORDER BY created_at DESC")
         rows = await cur.fetchall()
-        return [dict(id=r[0], zoom_meeting_id=r[1], topic=r[2], start_time=r[3], join_url=r[4], short_url=r[5], status=r[6], created_by=r[7], created_at=r[8], updated_at=r[9]) for r in rows]
+        return [dict(id=r[0], zoom_meeting_id=r[1], topic=r[2], start_time=r[3], join_url=r[4], status=r[5], created_by=r[6], created_at=r[7], updated_at=r[8]) for r in rows]
 
 
 async def list_meetings_with_shortlinks() -> List[Dict]:
@@ -175,9 +173,9 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
     async with aiosqlite.connect(settings.db_path) as db:
         # Get meetings
         meetings_cur = await db.execute("""
-            SELECT id, zoom_meeting_id, topic, start_time, join_url, short_url, status, created_by, created_at, updated_at 
-            FROM meetings 
-            WHERE status = 'active' 
+            SELECT id, zoom_meeting_id, topic, start_time, join_url, status, created_by, created_at, updated_at
+            FROM meetings
+            WHERE status = 'active'
             ORDER BY created_at DESC
         """)
         meetings_rows = await meetings_cur.fetchall()
@@ -185,16 +183,15 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
         meetings = []
         for r in meetings_rows:
             meeting = dict(
-                id=r[0], 
-                zoom_meeting_id=r[1], 
-                topic=r[2], 
-                start_time=r[3], 
-                join_url=r[4], 
-                short_url=r[5], 
-                status=r[6], 
-                created_by=r[7], 
-                created_at=r[8], 
-                updated_at=r[9]
+                id=r[0],
+                zoom_meeting_id=r[1],
+                topic=r[2],
+                start_time=r[3],
+                join_url=r[4],
+                status=r[5],
+                created_by=r[6],
+                created_at=r[7],
+                updated_at=r[8]
             )
             
             # Get shortlinks for this meeting
@@ -235,24 +232,30 @@ async def update_meeting_status(zoom_meeting_id: str, status: str):
 
 async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
     """
-    Sync meetings from Zoom API to database.
-    Returns dict with counts: {'added': int, 'updated': int, 'deleted': int, 'errors': int}
+    Sync meetings from Zoom API to database and update expired meetings.
+    Returns dict with counts: {'added': int, 'updated': int, 'deleted': int, 'expired': int, 'errors': int}
     """
-    logger.info("Starting Zoom meetings sync")
-    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'errors': 0}
-    
+    logger.info("Starting Zoom meetings sync with expiry check")
+    stats = {'added': 0, 'updated': 0, 'deleted': 0, 'expired': 0, 'errors': 0}
+
     try:
+        from datetime import datetime, timezone
+
+        # Get current time in UTC for expiry check
+        now = datetime.now(timezone.utc)
+
         # Get meetings from Zoom
         zoom_data = await zoom_client.list_upcoming_meetings('me')
         zoom_meetings = zoom_data.get('meetings', [])
         zoom_ids = {str(meeting.get('id', '')) for meeting in zoom_meetings if meeting.get('id')}
         logger.info("Found %d active meetings in Zoom", len(zoom_ids))
-        
-        # Get existing active meetings from DB
+
+        # Get existing meetings from DB (all statuses)
         existing_meetings = await list_meetings()
+        existing_by_id = {m['zoom_meeting_id']: m for m in existing_meetings}
         existing_active = {m['zoom_meeting_id']: m for m in existing_meetings if m['status'] == 'active'}
-        logger.info("Found %d active meetings in DB", len(existing_active))
-        
+        logger.info("Found %d total meetings in DB (%d active)", len(existing_by_id), len(existing_active))
+
         async with aiosqlite.connect(settings.db_path) as db:
             # Mark meetings that exist in DB but not in Zoom as deleted
             for zoom_id, meeting in existing_active.items():
@@ -264,7 +267,7 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                     except Exception as e:
                         logger.exception("Failed to mark meeting %s as deleted: %s", zoom_id, e)
                         stats['errors'] += 1
-            
+
             # Process meetings from Zoom
             for meeting in zoom_meetings:
                 zoom_id = str(meeting.get('id', ''))
@@ -272,23 +275,37 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                     logger.warning("Meeting without ID: %s", meeting)
                     stats['errors'] += 1
                     continue
-                
+
                 topic = meeting.get('topic', 'No Topic')
                 start_time = meeting.get('start_time', '')
                 join_url = meeting.get('join_url', '')
-                
+
                 if zoom_id not in existing_active:
-                    # Add new meeting
-                    try:
-                        await db.execute(
-                            "INSERT INTO meetings (zoom_meeting_id, topic, start_time, join_url, status, created_by) VALUES (?, ?, ?, ?, 'active', 'CreatedFromZoomApp')",
-                            (zoom_id, topic, start_time, join_url),
-                        )
-                        stats['added'] += 1
-                        logger.debug("Added meeting %s: %s", zoom_id, topic)
-                    except Exception as e:
-                        logger.exception("Failed to add meeting %s: %s", zoom_id, e)
-                        stats['errors'] += 1
+                    # Check if meeting exists but is not active (deleted/expired)
+                    if zoom_id in existing_by_id:
+                        # Reactivate existing meeting
+                        try:
+                            await db.execute(
+                                "UPDATE meetings SET topic = ?, start_time = ?, join_url = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                                (topic, start_time, join_url, zoom_id),
+                            )
+                            stats['updated'] += 1
+                            logger.debug("Reactivated meeting %s: %s", zoom_id, topic)
+                        except Exception as e:
+                            logger.exception("Failed to reactivate meeting %s: %s", zoom_id, e)
+                            stats['errors'] += 1
+                    else:
+                        # Add new meeting
+                        try:
+                            await db.execute(
+                                "INSERT INTO meetings (zoom_meeting_id, topic, start_time, join_url, status, created_by) VALUES (?, ?, ?, ?, 'active', 'CreatedFromZoomApp')",
+                                (zoom_id, topic, start_time, join_url),
+                            )
+                            stats['added'] += 1
+                            logger.debug("Added meeting %s: %s", zoom_id, topic)
+                        except Exception as e:
+                            logger.exception("Failed to add meeting %s: %s", zoom_id, e)
+                            stats['errors'] += 1
                 else:
                     # Update existing meeting if needed
                     existing = existing_active[zoom_id]
@@ -308,14 +325,107 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                         except Exception as e:
                             logger.exception("Failed to update meeting %s: %s", zoom_id, e)
                             stats['errors'] += 1
-            
+
+            # Check for expired meetings among all active meetings in DB
+            cursor = await db.execute("""
+                SELECT zoom_meeting_id, topic, start_time
+                FROM meetings
+                WHERE status = 'active' AND start_time IS NOT NULL
+            """)
+            active_meetings = await cursor.fetchall()
+
+            for zoom_id, topic, start_time_str in active_meetings:
+                try:
+                    # Parse start_time - handle different formats
+                    if start_time_str.endswith('Z'):
+                        # ISO format with Z (UTC)
+                        start_time = datetime.fromisoformat(start_time_str[:-1]).replace(tzinfo=timezone.utc)
+                    else:
+                        # Try parsing as ISO format, assume UTC if no timezone
+                        start_time = datetime.fromisoformat(start_time_str)
+                        if start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+
+                    # Check if meeting has expired (current time > start time)
+                    if now > start_time:
+                        await db.execute(
+                            "UPDATE meetings SET status = 'expired', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                            (zoom_id,)
+                        )
+                        stats['expired'] += 1
+                        logger.debug("Marked meeting %s (%s) as expired", zoom_id, topic)
+
+                except Exception as e:
+                    logger.warning("Failed to process meeting %s: %s", zoom_id, e)
+                    stats['errors'] += 1
+
             await db.commit()
-        
-        logger.info("Zoom sync completed: added=%d, updated=%d, deleted=%d, errors=%d", stats['added'], stats['updated'], stats['deleted'], stats['errors'])
+
+        logger.info("Zoom sync with expiry check completed: added=%d, updated=%d, deleted=%d, expired=%d, errors=%d",
+                   stats['added'], stats['updated'], stats['deleted'], stats['expired'], stats['errors'])
         return stats
-        
+
     except Exception as e:
         logger.exception("Failed to sync meetings from Zoom: %s", e)
+        stats['errors'] += 1
+        return stats
+
+
+async def update_expired_meetings() -> Dict[str, int]:
+    """
+    Update status of meetings that have passed their start time to 'expired'.
+    Returns dict with counts: {'expired': int, 'errors': int}
+    """
+    logger.info("Checking for expired meetings")
+    stats = {'expired': 0, 'errors': 0}
+
+    try:
+        from datetime import datetime, timezone
+
+        # Get current time in UTC
+        now = datetime.now(timezone.utc)
+
+        async with aiosqlite.connect(settings.db_path) as db:
+            # Get all active meetings
+            cursor = await db.execute("""
+                SELECT zoom_meeting_id, topic, start_time
+                FROM meetings
+                WHERE status = 'active' AND start_time IS NOT NULL
+            """)
+            active_meetings = await cursor.fetchall()
+
+            for zoom_id, topic, start_time_str in active_meetings:
+                try:
+                    # Parse start_time - handle different formats
+                    if start_time_str.endswith('Z'):
+                        # ISO format with Z (UTC)
+                        start_time = datetime.fromisoformat(start_time_str[:-1]).replace(tzinfo=timezone.utc)
+                    else:
+                        # Try parsing as ISO format, assume UTC if no timezone
+                        start_time = datetime.fromisoformat(start_time_str)
+                        if start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+
+                    # Check if meeting has expired (current time > start time)
+                    if now > start_time:
+                        await db.execute(
+                            "UPDATE meetings SET status = 'expired', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                            (zoom_id,)
+                        )
+                        stats['expired'] += 1
+                        logger.debug("Marked meeting %s (%s) as expired", zoom_id, topic)
+
+                except Exception as e:
+                    logger.warning("Failed to process meeting %s: %s", zoom_id, e)
+                    stats['errors'] += 1
+
+            await db.commit()
+
+        logger.info("Expired meetings update completed: expired=%d, errors=%d", stats['expired'], stats['errors'])
+        return stats
+
+    except Exception as e:
+        logger.exception("Failed to update expired meetings: %s", e)
         stats['errors'] += 1
         return stats
 

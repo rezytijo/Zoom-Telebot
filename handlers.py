@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from typing import Optional
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip
 from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, all_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create
@@ -258,7 +258,8 @@ async def cmd_help(msg: Message):
             "<b>Perintah Admin (khusus Owner/Admin):</b>\n"
             "<code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
             "<code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
-            "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus)\n"
+            "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus & expired)\n"
+            "<code>/check_expired</code> - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
             "<code>/backup</code> - Buat backup database dan konfigurasi shorteners\n"
             "<code>/restore</code> - Restore dari file backup ZIP\n\n"
         )
@@ -504,6 +505,7 @@ async def cmd_sync_meetings(msg: Message):
             f"➕ Ditambahkan: {stats['added']}\n"
             f"🔄 Diupdate: {stats['updated']}\n"
             f"🗑️ Ditandai Dihapus: {stats['deleted']}\n"
+            f"⏰ Ditandai Expired: {stats.get('expired', 0)}\n"
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Sistem otomatis mensinkronkan setiap 30 menit dan saat startup.</i>"
         )
@@ -511,6 +513,258 @@ async def cmd_sync_meetings(msg: Message):
     except Exception as e:
         logger.exception("Manual sync failed: %s", e)
         await msg.reply(f"❌ <b>Gagal melakukan sinkronisasi:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+
+@router.message(Command("check_expired"))
+async def cmd_check_expired(msg: Message):
+    """Manually check and update expired meetings (owner only)."""
+    if msg.from_user is None:
+        return
+
+    # Only owner can run expiry check
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await msg.reply("Hanya owner yang dapat menjalankan check expired meetings.")
+        return
+
+    await msg.reply("🔍 Memeriksa meeting yang sudah expired...")
+
+    try:
+        stats = await update_expired_meetings()
+        text = (
+            "✅ <b>Pemeriksaan expired selesai!</b>\n\n"
+            f"📊 <b>Statistik:</b>\n"
+            f"⏰ Meeting ditandai expired: {stats['expired']}\n"
+            f"❌ Error: {stats['errors']}\n\n"
+            "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai expired.</i>"
+        )
+        await msg.reply(text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    except Exception as e:
+        logger.exception("Manual expiry check failed: %s", e)
+        await msg.reply(f"❌ <b>Gagal memeriksa expired meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+
+@router.message(Command("register_list"))
+async def cmd_register_list(msg: Message):
+    """Show list of pending users for approval (admin/owner only)."""
+    if msg.from_user is None:
+        return
+
+    # Check if user is admin/owner
+    user = await get_user_by_telegram_id(msg.from_user.id)
+    if not user or not is_allowed_to_create(user):
+        await msg.reply("❌ Hanya admin/owner yang dapat melihat daftar registrasi.")
+        return
+
+    try:
+        pending_users = await list_pending_users()
+
+        if not pending_users:
+            text = (
+                "📋 <b>Daftar Registrasi User</b>\n\n"
+                "✅ <b>Tidak ada user yang menunggu persetujuan.</b>\n\n"
+                "<i>Semua user sudah diproses.</i>"
+            )
+            await msg.reply(text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+            return
+
+        # Pagination settings
+        users_per_page = 5
+        total_users = len(pending_users)
+        total_pages = (total_users + users_per_page - 1) // users_per_page  # Ceiling division
+        page = 0  # Start from first page
+
+        # Get users for current page
+        start_idx = page * users_per_page
+        end_idx = min(start_idx + users_per_page, total_users)
+        page_users = pending_users[start_idx:end_idx]
+
+        text = (
+            "📋 <b>Daftar Registrasi User</b>\n"
+            f"📊 <b>Total menunggu:</b> {total_users}\n"
+            f"📄 <b>Halaman:</b> {page + 1}/{total_pages}\n\n"
+        )
+
+        keyboard_buttons = []
+
+        for user_data in page_users:
+            telegram_id = user_data['telegram_id']
+            username = user_data['username'] or '-'
+            created_at = user_data.get('created_at', 'Unknown')
+
+            # Format created_at if it's a string
+            if isinstance(created_at, str) and 'T' in created_at:
+                try:
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    wib_tz = timezone(timedelta(hours=7))
+                    dt_wib = dt.astimezone(wib_tz)
+                    formatted_date = dt_wib.strftime("%d/%m/%Y %H:%M")
+                except:
+                    formatted_date = created_at[:19]  # Fallback to first 19 chars
+            else:
+                formatted_date = str(created_at)
+
+            text += (
+                f"👤 <b>@{username}</b> (ID: <code>{telegram_id}</code>)\n"
+                f"📅 Daftar: {formatted_date}\n\n"
+            )
+
+            # Add action buttons for this user
+            if user.get('role') == 'owner':
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"✅ Terima @{username}", callback_data=f"accept:{telegram_id}"),
+                    InlineKeyboardButton(text=f"❌ Tolak @{username}", callback_data=f"reject:{telegram_id}")
+                ])
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"🚫 Ban @{username}", callback_data=f"ban:{telegram_id}")
+                ])
+            else:
+                # Regular admin buttons
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"✅ Terima @{username}", callback_data=f"accept:{telegram_id}"),
+                    InlineKeyboardButton(text=f"❌ Tolak @{username}", callback_data=f"reject:{telegram_id}")
+                ])
+
+        # Add navigation buttons if there are multiple pages
+        if total_pages > 1:
+            nav_buttons = []
+
+            # Previous page button (disabled on first page)
+            if page > 0:
+                nav_buttons.append(InlineKeyboardButton(text="◀️ Sebelumnya", callback_data=f"register_list:{page - 1}"))
+
+            # Page indicator
+            nav_buttons.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop"))
+
+            # Next page button
+            if page < total_pages - 1:
+                nav_buttons.append(InlineKeyboardButton(text="▶️ Selanjutnya", callback_data=f"register_list:{page + 1}"))
+
+            keyboard_buttons.append(nav_buttons)
+
+        # Add refresh and back buttons
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="🔄 Refresh", callback_data="register_list:0"),
+            InlineKeyboardButton(text="🏠 Kembali ke Menu", callback_data="back_to_main")
+        ])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        await msg.reply(text, reply_markup=kb, parse_mode="HTML")
+
+    except Exception as e:
+        logger.exception("Failed to show register list: %s", e)
+        await msg.reply(f"❌ <b>Gagal mengambil daftar registrasi:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+
+@router.message(Command("all_users"))
+async def cmd_all_users(msg: Message):
+    """Show list of all active/banned users with management options (admin/owner only)."""
+    if msg.from_user is None:
+        return
+
+    # Check if user is admin/owner
+    user = await get_user_by_telegram_id(msg.from_user.id)
+    if not user or not is_allowed_to_create(user):
+        await msg.reply("❌ Hanya admin/owner yang dapat melihat daftar semua user.")
+        return
+
+    try:
+        all_users = await list_all_users()
+
+        # Filter out pending users - only show whitelisted and banned users
+        active_users = [u for u in all_users if u['status'] == 'whitelisted']
+        banned_users = [u for u in all_users if u['status'] == 'banned']
+        filtered_users = active_users + banned_users
+
+        # Calculate statistics
+        total_active = len(active_users)
+        total_banned = len(banned_users)
+        total_users = len(all_users)  # Including pending users
+
+        if not filtered_users:
+            text = (
+                "👥 <b>Daftar Semua User</b>\n\n"
+                f"📊 <b>Total user Aktif:</b> {total_active}\n"
+                f"📊 <b>Total User di banned:</b> {total_banned}\n"
+                f"📊 <b>Total user:</b> {total_users}\n\n"
+                "❌ <b>Tidak ada user aktif atau banned.</b>\n\n"
+                "<i>Semua user masih dalam status pending.</i>"
+            )
+            await msg.reply(text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+            return
+
+        # Pagination settings
+        users_per_page = 5
+        total_filtered = len(filtered_users)
+        total_pages = (total_filtered + users_per_page - 1) // users_per_page  # Ceiling division
+        page = 0  # Start from first page
+
+        # Get users for current page
+        start_idx = page * users_per_page
+        end_idx = min(start_idx + users_per_page, total_filtered)
+        page_users = filtered_users[start_idx:end_idx]
+
+        text = (
+            "👥 <b>Daftar Semua User</b>\n"
+            f"📊 <b>Total user Aktif:</b> {total_active}\n"
+            f"📊 <b>Total User di banned:</b> {total_banned}\n"
+            f"📊 <b>Total user:</b> {total_users}\n"
+            f"📄 <b>Halaman:</b> {page + 1}/{total_pages}\n\n"
+        )
+
+        keyboard_buttons = []
+
+        for user_data in page_users:
+            telegram_id = user_data['telegram_id']
+            username = user_data['username'] or '-'
+            role = user_data.get('role', 'user').capitalize()
+            status = user_data['status']
+
+            if status == 'whitelisted':
+                text += f"✅ <b>@{username}</b>\n"
+                text += f"   ├ Role: {role}\n"
+                text += f"   └ ID: <code>{telegram_id}</code>\n\n"
+                # Add management buttons for active users
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"⚙️ Kelola @{username}", callback_data=f"manage_user:{telegram_id}")
+                ])
+            elif status == 'banned':
+                text += f"🚫 <b>@{username}</b>\n"
+                text += f"   ├ Role: {role}\n"
+                text += f"   └ ID: <code>{telegram_id}</code>\n\n"
+                # Add unban button for banned users
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"✅ Unban @{username}", callback_data=f"unban:{telegram_id}")
+                ])
+
+        # Add navigation buttons if there are multiple pages
+        if total_pages > 1:
+            nav_buttons = []
+
+            # Previous page button (disabled on first page)
+            if page > 0:
+                nav_buttons.append(InlineKeyboardButton(text="◀️ Sebelumnya", callback_data=f"all_users:{page - 1}"))
+
+            # Page indicator
+            nav_buttons.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop"))
+
+            # Next page button
+            if page < total_pages - 1:
+                nav_buttons.append(InlineKeyboardButton(text="▶️ Selanjutnya", callback_data=f"all_users:{page + 1}"))
+
+            keyboard_buttons.append(nav_buttons)
+
+        # Add refresh and back buttons
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="🔄 Refresh", callback_data="all_users:0"),
+            InlineKeyboardButton(text="🏠 Kembali ke Menu", callback_data="back_to_main")
+        ])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        await msg.reply(text, reply_markup=kb, parse_mode="HTML")
+
+    except Exception as e:
+        logger.exception("Failed to show all users list: %s", e)
+        await msg.reply(f"❌ <b>Gagal mengambil daftar user:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
 
 
 @router.message(Command("start"))
@@ -609,193 +863,6 @@ class ShortenerStates(StatesGroup):
     waiting_for_provider = State()
     waiting_for_custom_choice = State()
     waiting_for_custom_url = State()
-
-
-
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('accept:'))
-async def cb_accept(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    await update_user_status(telegram_id, 'whitelisted', 'user')
-    await _safe_edit_or_fallback(c, f"User {telegram_id} diterima (whitelisted)")
-    await c.answer("User diterima")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('reject:'))
-async def cb_reject(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    # Owner rejected the registration: delete the user row entirely
-    try:
-        await delete_user(telegram_id)
-        await _safe_edit_or_fallback(c, f"User {telegram_id} ditolak dan dihapus dari daftar")
-        await c.answer("User ditolak dan dihapus")
-    except Exception as e:
-        logger.exception("Failed to delete user %s: %s", telegram_id, e)
-        await c.answer("Gagal menghapus user")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('ban_toggle:'))
-async def cb_ban_toggle(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    user = await get_user_by_telegram_id(telegram_id)
-    if not user:
-        await c.answer("User tidak ditemukan")
-        return
-    is_banned = user['status'] == 'banned'
-    await ban_toggle_user(telegram_id, not is_banned)
-    new_status = 'whitelisted' if is_banned else 'banned'
-    await _safe_edit_or_fallback(c, f"User {telegram_id} status sekarang: {new_status}")
-    await c.answer("Status diubah")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('ban:'))
-async def cb_ban(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    await ban_toggle_user(telegram_id, True)
-    await _safe_edit_or_fallback(c, f"User {telegram_id} dibanned")
-    await c.answer("User dibanned")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('delete_user:'))
-async def cb_delete_user(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    # Delete the user row
-    try:
-        await delete_user(telegram_id)
-        await _safe_edit_or_fallback(c, f"User {telegram_id} dihapus dari daftar")
-        await c.answer("User dihapus")
-    except Exception as e:
-        logger.exception("Failed to delete user %s: %s", telegram_id, e)
-        await c.answer("Gagal menghapus user")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('change_role:'))
-async def cb_change_role(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    # Send role selection keyboard
-    kb = role_selection_buttons(telegram_id)
-    await _safe_edit_or_fallback(c, f"Pilih role baru untuk user {telegram_id}:", reply_markup=kb)
-    await c.answer()
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('change_status:'))
-async def cb_change_status(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    # Send status selection keyboard
-    kb = status_selection_buttons(telegram_id)
-    await _safe_edit_or_fallback(c, f"Pilih status baru untuk user {telegram_id}:", reply_markup=kb)
-    await c.answer()
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('set_role:'))
-async def cb_set_role(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid, role = data.split(':', 2)
-    telegram_id = int(tid)
-    # Update role, keep status the same
-    user = await get_user_by_telegram_id(telegram_id)
-    if not user:
-        await c.answer("User tidak ditemukan")
-        return
-    current_status = user['status']
-    await update_user_status(telegram_id, current_status, role)
-    # Re-fetch user and update message
-    updated_user = await get_user_by_telegram_id(telegram_id)
-    if updated_user:
-        text = _get_user_info_text(updated_user)
-        kb = all_users_buttons(telegram_id)
-        await _safe_edit_or_fallback(c, text, reply_markup=kb)
-    await c.answer("Role diubah")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('set_status:'))
-async def cb_set_status(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid, status = data.split(':', 2)
-    telegram_id = int(tid)
-    # Update status, keep role the same
-    user = await get_user_by_telegram_id(telegram_id)
-    if not user:
-        await c.answer("User tidak ditemukan")
-        return
-    current_role = user['role']
-    await update_user_status(telegram_id, status, current_role)
-    # Re-fetch user and update message
-    updated_user = await get_user_by_telegram_id(telegram_id)
-    if updated_user:
-        text = _get_user_info_text(updated_user)
-        kb = all_users_buttons(telegram_id)
-        await _safe_edit_or_fallback(c, text, reply_markup=kb)
-    await c.answer("Status diubah")
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('cancel_change:'))
-async def cb_cancel_change(c: CallbackQuery):
-    data = c.data or ""
-    if not data:
-        await c.answer()
-        return
-
-    _, tid = data.split(':', 1)
-    telegram_id = int(tid)
-    # Re-fetch user and show original info with buttons
-    user = await get_user_by_telegram_id(telegram_id)
-    if user:
-        text = _get_user_info_text(user)
-        kb = all_users_buttons(telegram_id)
-        await _safe_edit_or_fallback(c, text, reply_markup=kb)
-    await c.answer("Dibatalkan")
 
 
 @router.callback_query(lambda c: c.data and c.data == 'create_meeting')
@@ -1021,7 +1088,31 @@ async def cb_list_meetings(c: CallbackQuery):
     try:
         all_meetings = await list_meetings_with_shortlinks()
         # Filter only active meetings (already filtered in query)
-        meetings = all_meetings
+        meetings = all_meetings or []
+
+        # Sort meetings by start_time ascending (earliest first).
+        # We normalize parsed datetimes to UTC for consistent ordering.
+        def _parse_start_time_to_utc(st: str):
+            try:
+                if not st:
+                    return datetime.max.replace(tzinfo=timezone.utc)
+                # handle UTC 'Z' suffix
+                if isinstance(st, str) and st.endswith('Z'):
+                    dt = datetime.fromisoformat(st[:-1]).replace(tzinfo=timezone.utc)
+                else:
+                    dt = datetime.fromisoformat(st)
+
+                if dt.tzinfo is None:
+                    # assume UTC when no tz provided
+                    dt = dt.replace(tzinfo=timezone.utc)
+
+                # return in UTC
+                return dt.astimezone(timezone.utc)
+            except Exception:
+                # push unparsable times to the end
+                return datetime.max.replace(tzinfo=timezone.utc)
+
+        meetings = sorted(meetings, key=lambda mm: _parse_start_time_to_utc(mm.get('start_time', '')))
         
         if not meetings:
             text = "📅 <b>Tidak ada meeting aktif yang tersimpan.</b>"
@@ -1049,7 +1140,8 @@ async def cb_list_meetings(c: CallbackQuery):
             # Get creator username
             creator_username = await _get_username_from_telegram_id(created_by)
             
-            # Format time for custom display
+            # Include Meeting ID (try common keys) and Format time for custom display
+            meeting_id = m.get('zoom_meeting_id') or 'N/A'
             try:
                 # Parse datetime dengan handling berbagai format
                 if start_time.endswith('Z'):
@@ -1092,6 +1184,7 @@ async def cb_list_meetings(c: CallbackQuery):
                 formatted_time_custom = "Waktu tidak tersedia"
             
             text += f"<b>{i}. {topic}</b>\n"
+            text += f"🆔 Meeting ID: {meeting_id}\n"
             text += f"👤 Dibuat oleh: {creator_username}\n"
             text += f"🕛 {formatted_time_custom}\n"
             text += f"🔗 Link Zoom: {join_url}\n"
@@ -1590,7 +1683,7 @@ async def cmd_zoom_del(msg: Message):
     # Remove the command from first line
     first_line = lines[0]
     if first_line.startswith('/zoom_del'):
-        first_line = first_line[8:].strip()  # Remove "/zoom_del" prefix
+        first_line = first_line[9:].strip()  # Remove "/zoom_del" prefix
         lines[0] = first_line
     
     # Filter out empty lines after processing
@@ -1913,3 +2006,541 @@ async def shortener_receive_url(msg: Message, state: FSMContext):
     await state.set_state(ShortenerStates.waiting_for_provider)
     logger.info("State set to waiting_for_provider")
 
+
+
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('accept:'))
+async def cb_accept(c: CallbackQuery):
+    data = c.data or ""
+    if not data:
+        await c.answer()
+        return
+
+    _, tid = data.split(':', 1)
+    telegram_id = int(tid)
+    await update_user_status(telegram_id, 'whitelisted', 'user')
+
+    # Instead of showing a simple message, refresh the register list
+    # Create a mock callback with register_list:0 to refresh to first page
+    mock_callback = type('MockCallback', (), {
+        'data': 'register_list:0',
+        'from_user': c.from_user,
+        'message': c.message,
+        'answer': c.answer
+    })()
+
+    await cb_register_list(mock_callback)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('reject:'))
+async def cb_reject(c: CallbackQuery):
+    data = c.data or ""
+    if not data:
+        await c.answer()
+        return
+
+    _, tid = data.split(':', 1)
+    telegram_id = int(tid)
+    # Owner rejected the registration: delete the user row entirely
+    try:
+        await delete_user(telegram_id)
+        # Instead of showing a simple message, refresh the register list
+        mock_callback = type('MockCallback', (), {
+            'data': 'register_list:0',
+            'from_user': c.from_user,
+            'message': c.message,
+            'answer': c.answer
+        })()
+        await cb_register_list(mock_callback)
+    except Exception as e:
+        logger.exception("Failed to delete user %s: %s", telegram_id, e)
+        await c.answer("Gagal menghapus user")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('ban_toggle:'))
+async def cb_ban_toggle(c: CallbackQuery):
+    data = c.data or ""
+    if not data:
+        await c.answer()
+        return
+
+    _, tid = data.split(':', 1)
+    telegram_id = int(tid)
+    user = await get_user_by_telegram_id(telegram_id)
+    if not user:
+        await c.answer("User tidak ditemukan")
+        return
+    is_banned = user['status'] == 'banned'
+    await ban_toggle_user(telegram_id, not is_banned)
+
+    # Instead of showing a simple message, refresh the all users list
+    mock_callback = type('MockCallback', (), {
+        'data': 'all_users:0',
+        'from_user': c.from_user,
+        'message': c.message,
+        'answer': c.answer
+    })()
+    await cb_all_users(mock_callback)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('ban:'))
+async def cb_ban(c: CallbackQuery):
+    data = c.data or ""
+    if not data:
+        await c.answer()
+        return
+
+    _, tid = data.split(':', 1)
+    telegram_id = int(tid)
+    await ban_toggle_user(telegram_id, True)
+
+    # Instead of showing a simple message, refresh the register list
+    mock_callback = type('MockCallback', (), {
+        'data': 'register_list:0',
+        'from_user': c.from_user,
+        'message': c.message,
+        'answer': c.answer
+    })()
+    await cb_register_list(mock_callback)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('unban:'))
+async def cb_unban(c: CallbackQuery):
+    data = c.data or ""
+    if not data:
+        await c.answer()
+        return
+
+    _, tid = data.split(':', 1)
+    telegram_id = int(tid)
+    await ban_toggle_user(telegram_id, False)  # False = unban
+
+    # Instead of showing a simple message, refresh the all users list
+    mock_callback = type('MockCallback', (), {
+        'data': 'all_users:0',
+        'from_user': c.from_user,
+        'message': c.message,
+        'answer': c.answer
+    })()
+    await cb_all_users(mock_callback)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('manage_user:'))
+async def cb_manage_user(c: CallbackQuery):
+    data = c.data or ""
+    if not data:
+        await c.answer()
+        return
+
+    _, tid = data.split(':', 1)
+    telegram_id = int(tid)
+
+    # Get user info
+    user = await get_user_by_telegram_id(telegram_id)
+    if not user:
+        await c.answer("User tidak ditemukan")
+        return
+
+    # Show user management options
+    text = _get_user_info_text(user)
+    kb = all_users_buttons(telegram_id)
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and (c.data == 'register_list' or c.data.startswith('register_list:')))
+async def cb_register_list(c: CallbackQuery):
+    """Refresh register list with pagination support."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    # Check if user is admin/owner
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not user or not is_allowed_to_create(user):
+        await c.answer("Akses ditolak")
+        return
+
+    # Parse page number from callback data
+    data = c.data or ""
+    page = 0  # Default page
+    if ':' in data:
+        try:
+            _, page_str = data.split(':', 1)
+            page = int(page_str)
+        except (ValueError, IndexError):
+            page = 0
+
+    try:
+        pending_users = await list_pending_users()
+
+        if not pending_users:
+            text = (
+                "📋 <b>Daftar Registrasi User</b>\n\n"
+                "✅ <b>Tidak ada user yang menunggu persetujuan.</b>\n\n"
+                "<i>Semua user sudah diproses.</i>"
+            )
+            await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons())
+            return
+
+        # Pagination settings
+        users_per_page = 5
+        total_users = len(pending_users)
+        total_pages = (total_users + users_per_page - 1) // users_per_page  # Ceiling division
+
+        # Ensure page is within bounds
+        if page < 0:
+            page = 0
+        if page >= total_pages:
+            page = total_pages - 1
+
+        # Get users for current page
+        start_idx = page * users_per_page
+        end_idx = min(start_idx + users_per_page, total_users)
+        page_users = pending_users[start_idx:end_idx]
+
+        text = (
+            "📋 <b>Daftar Registrasi User</b>\n"
+            f"📊 <b>Total menunggu:</b> {total_users}\n"
+            f"📄 <b>Halaman:</b> {page + 1}/{total_pages}\n\n"
+        )
+
+        keyboard_buttons = []
+
+        for user_data in page_users:
+            telegram_id = user_data['telegram_id']
+            username = user_data['username'] or '-'
+            created_at = user_data.get('created_at', 'Unknown')
+
+            # Format created_at if it's a string
+            if isinstance(created_at, str) and 'T' in created_at:
+                try:
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    wib_tz = timezone(timedelta(hours=7))
+                    dt_wib = dt.astimezone(wib_tz)
+                    formatted_date = dt_wib.strftime("%d/%m/%Y %H:%M")
+                except:
+                    formatted_date = created_at[:19]  # Fallback to first 19 chars
+            else:
+                formatted_date = str(created_at)
+
+            text += (
+                f"👤 <b>@{username}</b> (ID: <code>{telegram_id}</code>)\n"
+                f"📅 Daftar: {formatted_date}\n\n"
+            )
+
+            # Add action buttons for this user
+            if user.get('role') == 'owner':
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"✅ Terima @{username}", callback_data=f"accept:{telegram_id}"),
+                    InlineKeyboardButton(text=f"❌ Tolak @{username}", callback_data=f"reject:{telegram_id}")
+                ])
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"🚫 Ban @{username}", callback_data=f"ban:{telegram_id}")
+                ])
+            else:
+                # Regular admin buttons
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"✅ Terima @{username}", callback_data=f"accept:{telegram_id}"),
+                    InlineKeyboardButton(text=f"❌ Tolak @{username}", callback_data=f"reject:{telegram_id}")
+                ])
+
+        # Add navigation buttons if there are multiple pages
+        if total_pages > 1:
+            nav_buttons = []
+
+            # Previous page button (disabled on first page)
+            if page > 0:
+                nav_buttons.append(InlineKeyboardButton(text="◀️ Sebelumnya", callback_data=f"register_list:{page - 1}"))
+
+            # Page indicator
+            nav_buttons.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop"))
+
+            # Next page button
+            if page < total_pages - 1:
+                nav_buttons.append(InlineKeyboardButton(text="▶️ Selanjutnya", callback_data=f"register_list:{page + 1}"))
+
+            keyboard_buttons.append(nav_buttons)
+
+        # Add refresh and back buttons
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="🔄 Refresh", callback_data="register_list:0"),
+            InlineKeyboardButton(text="🏠 Kembali ke Menu", callback_data="back_to_main")
+        ])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+    except Exception as e:
+        logger.exception("Failed to refresh register list: %s", e)
+        await _safe_edit_or_fallback(c, f"❌ <b>Gagal refresh daftar registrasi:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data == 'noop')
+async def cb_noop(c: CallbackQuery):
+    """No operation callback - just answer to remove loading state."""
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and (c.data == 'all_users' or c.data.startswith('all_users:')))
+async def cb_all_users(c: CallbackQuery):
+    """Refresh all users list with pagination support (excludes pending users)."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    # Check if user is admin/owner
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not user or not is_allowed_to_create(user):
+        await c.answer("Akses ditolak")
+        return
+
+    # Parse page number from callback data
+    data = c.data or ""
+    page = 0  # Default page
+    if ':' in data:
+        try:
+            _, page_str = data.split(':', 1)
+            page = int(page_str)
+        except (ValueError, IndexError):
+            page = 0
+
+    try:
+        all_users = await list_all_users()
+
+        # Filter out pending users - only show whitelisted and banned users
+        active_users = [u for u in all_users if u['status'] == 'whitelisted']
+        banned_users = [u for u in all_users if u['status'] == 'banned']
+        filtered_users = active_users + banned_users
+
+        # Calculate statistics
+        total_active = len(active_users)
+        total_banned = len(banned_users)
+        total_users = len(all_users)  # Including pending users
+
+        if not filtered_users:
+            text = (
+                "👥 <b>Daftar Semua User</b>\n\n"
+                f"📊 <b>Total user Aktif:</b> {total_active}\n"
+                f"📊 <b>Total User di banned:</b> {total_banned}\n"
+                f"📊 <b>Total user:</b> {total_users}\n\n"
+                "❌ <b>Tidak ada user aktif atau banned.</b>\n\n"
+                "<i>Semua user masih dalam status pending.</i>"
+            )
+            await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons())
+            return
+
+        # Pagination settings
+        users_per_page = 5
+        total_filtered = len(filtered_users)
+        total_pages = (total_filtered + users_per_page - 1) // users_per_page  # Ceiling division
+        page = 0  # Start from first page
+
+        # Get users for current page
+        start_idx = page * users_per_page
+        end_idx = min(start_idx + users_per_page, total_filtered)
+        page_users = filtered_users[start_idx:end_idx]
+
+        text = (
+            "👥 <b>Daftar Semua User</b>\n"
+            f"📊 <b>Total user Aktif:</b> {total_active}\n"
+            f"📊 <b>Total User di banned:</b> {total_banned}\n"
+            f"📊 <b>Total user:</b> {total_users}\n"
+            f"📄 <b>Halaman:</b> {page + 1}/{total_pages}\n\n"
+        )
+
+        keyboard_buttons = []
+
+        for user_data in page_users:
+            telegram_id = user_data['telegram_id']
+            username = user_data['username'] or '-'
+            role = user_data.get('role', 'user').capitalize()
+            status = user_data['status']
+
+            if status == 'whitelisted':
+                text += f"✅ <b>@{username}</b>\n"
+                text += f"   ├ Role: {role}\n"
+                text += f"   └ ID: <code>{telegram_id}</code>\n\n"
+                # Add management buttons for active users
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"⚙️ Kelola @{username}", callback_data=f"manage_user:{telegram_id}")
+                ])
+            elif status == 'banned':
+                text += f"🚫 <b>@{username}</b>\n"
+                text += f"   ├ Role: {role}\n"
+                text += f"   └ ID: <code>{telegram_id}</code>\n\n"
+                # Add unban button for banned users
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text=f"✅ Unban @{username}", callback_data=f"unban:{telegram_id}")
+                ])
+
+        # Add navigation buttons if there are multiple pages
+        if total_pages > 1:
+            nav_buttons = []
+
+            # Previous page button (disabled on first page)
+            if page > 0:
+                nav_buttons.append(InlineKeyboardButton(text="◀️ Sebelumnya", callback_data=f"all_users:{page - 1}"))
+
+            # Page indicator
+            nav_buttons.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop"))
+
+            # Next page button
+            if page < total_pages - 1:
+                nav_buttons.append(InlineKeyboardButton(text="▶️ Selanjutnya", callback_data=f"all_users:{page + 1}"))
+
+            keyboard_buttons.append(nav_buttons)
+
+        # Add refresh and back buttons
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="🔄 Refresh", callback_data="all_users:0"),
+            InlineKeyboardButton(text="🏠 Kembali ke Menu", callback_data="back_to_main")
+        ])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+    except Exception as e:
+        logger.exception("Failed to show all users list: %s", e)
+        await _safe_edit_or_fallback(c, f"❌ <b>Gagal mengambil daftar user:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+@router.message(Command("backup"))
+async def cmd_backup(msg: Message, bot: Bot):
+    """Create backup of database and shorteners configuration (owner/admin only)."""
+    if msg.from_user is None:
+        return
+
+    # Only owner can backup
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await msg.reply("❌ Hanya owner yang dapat membuat backup.")
+        return
+
+    await msg.reply("🔄 Membuat backup database dan konfigurasi... Mohon tunggu.")
+
+    try:
+          # Create backup
+          zip_path = create_backup_zip(await backup_database(), backup_shorteners())
+
+          # Send the backup file
+          from aiogram.types import FSInputFile
+          backup_file = FSInputFile(zip_path)
+          await msg.reply_document(
+              document=backup_file,
+              filename=os.path.basename(zip_path),
+              caption="✅ Backup berhasil dibuat!\n\nFile berisi:\n• Database SQL dump\n• Konfigurasi shorteners\n• Metadata backup"
+          )
+
+          # Clean up after a short delay to ensure file is sent
+          import asyncio
+          await asyncio.sleep(1)  # Wait 1 second for file to be sent
+          os.unlink(zip_path)
+          logger.info("Backup sent successfully to owner")
+
+    except Exception as e:
+        logger.exception("Failed to create backup: %s", e)
+        await msg.reply(f"❌ Gagal membuat backup: {e}")
+
+@router.message(Command("restore"))
+async def cmd_restore(msg: Message, state: FSMContext):
+    """Restore database and shorteners from backup file (owner/admin only)."""
+    if msg.from_user is None:
+        return
+
+    # Only owner can restore
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await msg.reply("❌ Hanya owner yang dapat melakukan restore.")
+        return
+
+    await msg.reply(
+        "📦 **Mode Restore Backup**\n\n"
+        "Kirim file ZIP backup yang ingin direstore.\n\n"
+        "⚠️ **PERINGATAN:** Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
+        "Pastikan file backup valid dan dari sumber terpercaya.",
+        parse_mode="Markdown"
+    )
+
+    await state.set_state(RestoreStates.waiting_for_file)
+
+
+@router.message(RestoreStates.waiting_for_file)
+async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
+    """Handle the uploaded backup file for restore."""
+    if msg.from_user is None:
+        return
+
+    # Double-check owner permission
+    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
+        await state.clear()
+        return
+
+    if not msg.document:
+        await msg.reply("❌ Silakan kirim file ZIP backup yang valid.")
+        return
+
+    # Check if it's a ZIP file
+    if not msg.document.file_name or not msg.document.file_name.lower().endswith('.zip'):
+        await msg.reply("❌ File harus berformat ZIP.")
+        return
+
+    await msg.reply("🔄 Memproses file backup... Mohon tunggu.")
+
+    try:
+        # Download the file
+        file_info = await bot.get_file(msg.document.file_id)
+        if not file_info.file_path:
+            await msg.reply("❌ Gagal mendapatkan path file.")
+            await state.clear()
+            return
+
+        temp_zip = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+        await bot.download_file(file_info.file_path, temp_zip.name)
+        temp_zip.close()
+
+        # Extract and validate backup
+        extracted_files = extract_backup_zip(temp_zip.name)
+
+        required_files = ['database_backup.sql', 'shorteners_backup.json']
+        missing_files = [f for f in required_files if f not in extracted_files]
+
+        if missing_files:
+            await msg.reply(f"❌ File backup tidak valid. File yang hilang: {', '.join(missing_files)}")
+            # Clean up
+            os.unlink(temp_zip.name)
+            for f in extracted_files.values():
+                if os.path.exists(f):
+                    os.unlink(f)
+            await state.clear()
+            return
+
+        # Perform restore
+        await msg.reply("🔄 Memulihkan database...")
+        db_stats = await restore_database(extracted_files['database_backup.sql'])
+
+        await msg.reply("🔄 Memulihkan konfigurasi shorteners...")
+        shorteners_success = restore_shorteners(extracted_files['shorteners_backup.json'])
+
+        # Clean up
+        os.unlink(temp_zip.name)
+        for f in extracted_files.values():
+            if os.path.exists(f):
+                os.unlink(f)
+
+        await state.clear()
+
+        # Send success message
+        success_msg = (
+            "✅ **Restore Berhasil!**\n\n"
+            f"📊 **Database:** {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
+            f"🔗 **Shorteners:** {'Berhasil' if shorteners_success else 'Gagal'}\n\n"
+            "⚠️ Bot akan restart untuk menerapkan perubahan."
+        )
+
+        await msg.reply(success_msg, parse_mode="Markdown")
+
+        logger.info("Restore completed successfully by owner")
+
+    except Exception as e:
+        logger.exception("Failed to restore backup: %s", e)
+        await msg.reply(f"❌ Gagal melakukan restore: {e}")
+        await state.clear()
