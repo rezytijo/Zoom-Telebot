@@ -4,19 +4,30 @@
 
 services:
   zoom-telebot:
-    # Override for development
+    # Environment (values from host environment variables)
     env_file:
       - .env
+      # - stack.env (use this if you use Portainer or similar tools)
     environment:
-      - LOG_LEVEL=DEBUG
-      - DATABASE_URL=sqlite+aiosqlite:///./data/zoom_telebot.db
-      # All other variables loaded from .env file
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Syntax For External SQL Server: dialect+driver://username:password@host:port/database
+      # Syntax For SQLite: sqlite+aiosqlite:///./<path>/zoom_telebot.db
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./data/zoom_telebot.db}
+      - DEFAULT_MODE=${DEFAULT_MODE}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - INITIAL_OWNER_ID=${INITIAL_OWNER_ID}
+      - INITIAL_OWNER_USERNAME=${INITIAL_OWNER_USERNAME}
+      - ZOOM_ACCOUNT_ID=${ZOOM_ACCOUNT_ID}
+      - ZOOM_CLIENT_ID=${ZOOM_CLIENT_ID}
+      - ZOOM_CLIENT_SECRET=${ZOOM_CLIENT_SECRET}
+      - SID_ID=${SID_ID}
+      - SID_KEY=${SID_KEY}
+      - BITLY_TOKEN=${BITLY_TOKEN}
 
-    # Mount source code for live reload
-    volumes:
-      - .:/app:rw
-      - ./data:/app/data:rw
-      - ./logs:/app/logs:rw
+    # Volumes for persistence
+    volumes:    
+      - zoom-telebot_data:/app/data:rw # This is path where shorteners.json and database will be stored
+      - zoom-telebot_logs:/app/logs:rw # This is path where log files will be stored
 
     # Development command
     command: ["python", "dev.py", "debug"]

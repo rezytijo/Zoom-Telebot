@@ -6,12 +6,29 @@ def is_allowed_to_create(user: Optional[Dict]) -> bool:
 
     Rules:
     - If user is None => False
-    - Allowed statuses: 'whitelisted' and legacy 'approve'
-    - Role 'owner' is always allowed
+    - Allowed roles: 'owner', 'admin'
+    - Legacy: Allowed statuses 'whitelisted' and 'approve' for backward compatibility
     """
     if not user:
         return False
     status = user.get('status')
     role = user.get('role')
+    allowed_roles = ('owner', 'admin')
     allowed_statuses = ('whitelisted', 'approve')
-    return (status in allowed_statuses) or (role == 'owner')
+    return (role in allowed_roles) or (status in allowed_statuses)
+
+def is_owner_or_admin(user: Optional[Dict]) -> bool:
+    """Return True if the user dict indicates permission to create meetings.
+
+    Rules:
+    - If user is None => False
+    - Allowed roles: 'owner', 'admin'
+    - Legacy: Allowed statuses 'whitelisted' and 'approve' for backward compatibility
+    """
+    if not user:
+        return False
+    status = user.get('status')
+    role = user.get('role')
+    allowed_roles = ('owner', 'admin')
+    allowed_statuses = ('whitelisted', 'approve')
+    return (role in allowed_roles) and (status in allowed_statuses)
