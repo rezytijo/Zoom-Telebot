@@ -34,7 +34,7 @@ def user_action_buttons() -> InlineKeyboardMarkup:
     return kb
 
 
-def manage_users_buttons(telegram_id: int) -> InlineKeyboardMarkup:
+def all_users_buttons(telegram_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🗑️ Delete User", callback_data=f"delete_user:{telegram_id}")],
         [InlineKeyboardButton(text="🔄 Change Role", callback_data=f"change_role:{telegram_id}")],
@@ -43,17 +43,6 @@ def manage_users_buttons(telegram_id: int) -> InlineKeyboardMarkup:
     ])
     return kb
 
-def navigation_buttons(current_page: int, total_pages: int) -> InlineKeyboardMarkup:
-    buttons = []
-    if current_page > 0:
-        buttons.append(InlineKeyboardButton(text="◀️ Sebelumnya", callback_data=f"all_users:{current_page - 1}"))
-        # Page indicator
-        buttons.append(InlineKeyboardButton(text=f"📄 {current_page + 1}/{total_pages}", callback_data="noop"))
-    if current_page < total_pages - 1:
-        buttons.append(InlineKeyboardButton(text="▶️ Selanjutnya", callback_data=f"all_users:{current_page + 1}"))
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[buttons] if buttons else [])
-    return kb
 
 def role_selection_buttons(telegram_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(inline_keyboard=[
