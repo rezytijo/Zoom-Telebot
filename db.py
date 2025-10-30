@@ -132,6 +132,28 @@ async def delete_user(telegram_id: int):
     logger.info("User %s deleted from database", telegram_id)
 
 
+async def search_users(query: str) -> List[Dict]:
+    """Search for users by username or telegram_id."""
+    logger.debug("search_users called with query: %s", query)
+    async with aiosqlite.connect(settings.db_path) as db:
+        # Search by username (case-insensitive) or telegram_id
+        sql_query = """
+            SELECT id, telegram_id, username, status, role 
+            FROM users 
+            WHERE username LIKE ? OR CAST(telegram_id AS TEXT) LIKE ?
+            ORDER BY username
+        """
+        # For username, add wildcards for partial matching
+        username_query = f"%{query}%"
+        telegram_id_query = f"%{query}%"
+
+        cur = await db.execute(sql_query, (username_query, telegram_id_query))
+        rows = await cur.fetchall()
+        
+        return [dict(id=r[0], telegram_id=r[1], username=r[2], status=r[3], role=r[4]) for r in rows]
+
+
+
 # Meetings functions
 async def add_meeting(zoom_meeting_id: str, topic: str, start_time: str, join_url: str, created_by: int):
     logger.debug("add_meeting zoom_id=%s topic=%s created_by=%s", zoom_meeting_id, topic, created_by)

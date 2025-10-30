@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from typing import Optional
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users
 from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, all_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create, is_owner_or_admin
@@ -44,6 +44,10 @@ class ShortenerStates(StatesGroup):
 
 class RestoreStates(StatesGroup):
     waiting_for_file = State()
+
+
+class UserSearchStates(StatesGroup):
+    waiting_for_query = State()
 
 
 def extract_zoom_meeting_id(url: str) -> Optional[str]:
@@ -967,6 +971,151 @@ async def cb_list_meetings(c: CallbackQuery):
             await c.answer("Gagal mengambil daftar meeting")
 
 
+@router.callback_query(lambda c: c.data == 'search_user')
+async def cb_search_user(c: CallbackQuery, state: FSMContext):
+    """Handle user search button."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak diizinkan untuk mencari user.", show_alert=True)
+        return
+
+    await c.answer()
+    text = """🔎 **Pencarian User**
+Silakan masukkan username atau Telegram ID yang ingin Anda cari:"""
+    await _safe_edit_or_fallback(c, text, parse_mode="Markdown")
+    await state.set_state(UserSearchStates.waiting_for_query)
+
+
+@router.message(UserSearchStates.waiting_for_query)
+
+
+async def process_user_search_query(msg: Message, state: FSMContext):
+
+
+    """Process the user's search query and return results."""
+
+
+    if not msg.text:
+
+
+        await msg.reply("Mohon masukkan query pencarian.")
+
+
+        return
+
+
+
+
+
+    query = msg.text.strip()
+
+
+    await state.clear()
+
+
+
+
+
+    # Search for users
+
+
+    users = await search_users(query)
+
+
+
+
+
+    if not users:
+
+
+        text = f"❌ **Tidak ada hasil** untuk pencarian: `{query}`"
+
+
+        await msg.reply(text, reply_markup=back_to_main_new_buttons(), parse_mode="Markdown")
+
+
+        return
+
+
+
+
+
+    text = f"✅ **Hasil Pencarian untuk:** `{query}`\n\n"
+
+
+    buttons = []
+
+
+    for u in users:
+
+
+        username = u.get('username') or f"ID_{u.get('telegram_id')}"
+
+
+        role = u.get('role', 'guest')
+
+
+        status = u.get('status', 'pending')
+
+
+        telegram_id = u.get('telegram_id')
+
+
+        
+
+
+        text += f"👤 @{username}\n"
+
+
+        text += f"   ├─ ID: `{telegram_id}`\n"
+
+
+        text += f"   ├─ Role: {role.capitalize()}\n"
+
+
+        text += f"   └─ Status: {status.capitalize()}\n\n"
+
+
+
+
+
+        buttons.append([
+
+
+            InlineKeyboardButton(
+
+
+                text=f"⚙️ Kelola @{username}",
+
+
+                callback_data=f"manage_user:{telegram_id}"
+
+
+            )
+
+
+        ])
+
+
+
+
+
+    buttons.append([InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main_new")])
+
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+
+
+
+    await msg.reply(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
 @router.callback_query(lambda c: c.data == 'short_url')
 async def cb_short_url(c: CallbackQuery, state: FSMContext):
     logger.info("cb_short_url called")
@@ -1381,7 +1530,7 @@ async def cb_cancel_shorten(c: CallbackQuery):
     await c.answer()
 
 
-@router.message(Command("zoom_del"))
+@router.message(Command("zoom_del", "meet_del"))
 async def cmd_zoom_del(msg: Message):
     """Quick delete Zoom meeting(s): /zoom_del <zoom_meeting_id>
     
@@ -1596,6 +1745,169 @@ async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
         logger.exception("Failed to restore backup: %s", e)
         await msg.reply(f"❌ Gagal melakukan restore: {e}")
         await state.clear()
+
+
+# ----------------------------------------------------------------
+# --- KODE BARU UNTUK /ALL_USER DITAMBAHKAN DI SINI ---
+# ----------------------------------------------------------------
+
+async def build_all_users_message(page: int = 0):
+    """
+    Helper function untuk membuat teks dan keyboard untuk /all_users.
+    """
+    USERS_PER_PAGE = 5
+    
+    # 1. Ambil semua user dan filter yang BUKAN 'pending'
+    all_users = await list_all_users()
+    users = [u for u in all_users if u.get('status') != 'pending']
+    
+    # 2. Hitung statistik
+    total_users = len(users)
+    total_aktif = sum(1 for u in users if u.get('status') == 'whitelisted')
+    total_banned = sum(1 for u in users if u.get('status') == 'banned')
+    
+    # 3. Pengaturan Halaman (Pagination)
+    # math.ceil(total_users / USERS_PER_PAGE)
+    total_pages = max(1, (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE)
+    # Konversi dari 0-based index (page) ke 1-based index (current_page)
+    current_page = page + 1
+    
+    start_index = page * USERS_PER_PAGE
+    end_index = start_index + USERS_PER_PAGE
+    users_on_page = users[start_index:end_index]
+    
+    # 4. Buat Teks Pesan
+    text = f"👥 Daftar Semua User\n"
+    text += f"🟢 Total user Aktif: {total_aktif}\n"
+    text += f"⛔ Total User di banned: {total_banned}\n"
+    text += f"📊 Total user: {total_users}\n"
+    text += f"📄 Halaman: {current_page}/{total_pages}\n"
+    
+    buttons = []
+    
+    if not users_on_page:
+        text += "\nBelum ada user (selain pending) yang terdaftar."
+    
+    # 5. Buat daftar user untuk halaman ini
+    for u in users_on_page:
+        username = u.get('username') or f"ID_{u.get('telegram_id')}"
+        role = u.get('role', 'guest')
+        telegram_id = u.get('telegram_id')
+        
+        text += f"\n✅ @{username}\n"
+        text += f"   ├ Role: {role}\n"
+        text += f"   └ ID: {telegram_id}\n"
+        
+        # Tambahkan tombol kelola untuk user ini
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"⚙️ Kelola @{username}",
+                # Asumsi Anda memiliki handler untuk "manage_user:<id>"
+                callback_data=f"manage_user:{telegram_id}"
+            )
+        ])
+        
+    # 6. Buat Tombol Navigasi
+    nav_row = []
+    
+    # Tombol Back (◀️)
+    # Nonaktif jika di halaman pertama (page 0)
+    nav_row.append(
+        InlineKeyboardButton(
+            text="◀️",
+            callback_data=f"all_users:{page - 1}" if page > 0 else "noop"
+        )
+    )
+    
+    # Tombol Halaman (📄) - 'noop' berarti tidak melakukan apa-apa saat diklik
+    nav_row.append(
+        InlineKeyboardButton(
+            text=f"📄 {current_page}/{total_pages}",
+            callback_data="noop" # Atau ganti dengan logika 'pilih halaman' jika ada
+        )
+    )
+    
+    # Tombol Next (▶️)
+    # Nonaktif jika di halaman terakhir
+    nav_row.append(
+        InlineKeyboardButton(
+            text="▶️",
+            callback_data=f"all_users:{page + 1}" if current_page < total_pages else "noop"
+        )
+    )
+    buttons.append(nav_row)
+    
+    # 7. Tombol Kembali ke Menu
+    buttons.append([
+        InlineKeyboardButton(
+            text="[ Back To Menu]",
+            callback_data="back_to_main" # Menggunakan callback 'back_to_main' yang sudah ada
+        )
+    ])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    return text, keyboard
+
+@router.message(Command("all_user", "all_users"))
+async def cmd_all_user(msg: Message):
+    """
+    Handler untuk command /all_user.
+    Menampilkan daftar semua user yang tidak 'pending' dengan paginasi.
+    """
+    if msg.from_user is None:
+        return
+
+    # Periksa apakah user adalah admin atau owner
+    user = await get_user_by_telegram_id(msg.from_user.id)
+    if not is_owner_or_admin(user):
+        await msg.reply("Anda tidak memiliki izin untuk menggunakan perintah ini.")
+        return
+        
+    # Buat pesan untuk halaman pertama (page 0)
+    try:
+        text, keyboard = await build_all_users_message(page=0)
+        await msg.reply(text, reply_markup=keyboard, parse_mode="HTML") # Menggunakan HTML agar emoji render
+    except Exception as e:
+        logger.exception("Failed to build /all_users list: %s", e)
+        await msg.reply(f"Terjadi kesalahan saat mengambil daftar user: {e}")
+
+@router.callback_query(lambda c: c.data and c.data.startswith('all_users:'))
+async def cb_all_users(c: CallbackQuery):
+    """
+    Callback handler untuk paginasi /all_users.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil nomor halaman (page index) dari callback data
+    try:
+        page = int(c.data.split(':')[1])
+    except (IndexError, ValueError):
+        await c.answer("Halaman tidak valid.", show_alert=True)
+        return
+        
+    # Buat ulang pesan untuk halaman yang diminta
+    try:
+        text, keyboard = await build_all_users_message(page=page)
+        
+        # Gunakan _safe_edit_or_fallback untuk mengedit pesan
+        await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+        await c.answer() # Menjawab callback (menghilangkan loading)
+    except Exception as e:
+        logger.exception("Failed to update /all_users page: %s", e)
+        await c.answer("Gagal memuat halaman.", show_alert=True)
+
+# ----------------------------------------------------------------
+# --- AKHIR DARI KODE BARU ---
+# ----------------------------------------------------------------
 
 
 # Generic loggers placed at end so they don't prevent specific handlers from being

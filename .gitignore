@@ -176,3 +176,6 @@ Thumbs.db
 
 # Directory for log files
 /logs/
+/data/
+*.json
+handlers.allusers&registerlist.work.py

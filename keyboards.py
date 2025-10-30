@@ -30,6 +30,7 @@ def user_action_buttons() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📝 Create Meeting", callback_data="create_meeting")],
         [InlineKeyboardButton(text="📅 List Upcoming Meeting", callback_data="list_meetings")],
         [InlineKeyboardButton(text="🔗 Short URL", callback_data="short_url")],
+        [InlineKeyboardButton(text="🔍 Search User", callback_data="search_user")],
     ])
     return kb
 
