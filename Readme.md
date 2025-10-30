@@ -1,6 +1,6 @@
 # Zoom-Telebot (Aiogram + Zoom Server-to-Server OAuth)
 
-Ringkasan: bot Telegram untuk mengelola Zoom meeting dengan fitur whitelist, ownership, roles, polling/webhook modes, dan UI menggunakan inline keyboards.
+Ringkasan: bot Telegram untuk mengelola Zoom meeting dengan fitur whitelist, ownership, roles, multiple deployment modes (polling, webhook, development, production, test, debug), dan UI menggunakan inline keyboards.
 
 ## 🚀 Quick Start
 
@@ -84,6 +84,76 @@ python setup.py
 
 # Run bot
 python main.py
+```
+
+## 🤖 Bot Modes
+
+Bot ini mendukung beberapa mode operasi tergantung kebutuhan deployment:
+
+### 1. **Polling Mode** (Default)
+Mode standar untuk menerima update dari Telegram melalui polling API.
+```bash
+# Environment variable
+DEFAULT_MODE=polling
+
+# Local run
+python main.py
+
+# Docker
+docker compose up
+```
+
+### 2. **Webhook Mode** (Untuk Cloud Deployment)
+Mode untuk menerima update via HTTP webhook (cocok untuk server cloud).
+```bash
+# Environment variables
+DEFAULT_MODE=webhook
+WEBHOOK_SECRET=your_webhook_secret
+
+# Note: Webhook implementation sedang dalam development
+```
+
+### 3. **Development Mode**
+Mode development dengan auto-restart dan debug logging.
+```bash
+# Local dengan auto-restart
+python dev.py run --watch
+
+# Docker development
+docker compose --profile dev up
+
+# Debug mode
+python dev.py debug --watch
+```
+
+### 4. **Production Mode**
+Mode production dengan konfigurasi optimal untuk deployment.
+```bash
+# Docker production
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Dengan Makefile
+make prod-build && make prod-up
+```
+
+### 5. **Test Mode**
+Mode untuk menjalankan automated tests.
+```bash
+# Docker test
+docker compose --profile test up
+
+# Local test (jika ada test files)
+python -m pytest tests/
+```
+
+### 6. **Debug Mode**
+Mode dengan logging detail untuk debugging.
+```bash
+# Local debug
+python dev.py debug
+
+# Docker debug (development target)
+docker compose up
 ```
 
 ## 🐳 Docker Deployment
@@ -539,23 +609,36 @@ Script `setup.py` melakukan validasi dan inisialisasi:
 ## 📱 Bot Features
 
 ### User Management
-- **Registration**: User mendaftar via `/start`
-- **Approval System**: Owner/Admin approve user baru
-- **Role Management**: Owner → Admin → User → Guest
-- **Ban/Unban**: Owner dapat ban user
+- **/start**: User registration and main menu.
+- **/whoami**: Shows user's Telegram ID and owner status.
+- **/register_list**: (Admin) Lists pending user registrations.
+- **/all_users**: (Admin) Manages all users (change role, status, delete).
+- **/search_user**: (Admin) Searches for a user.
+- **Approval System**: Admins can accept, reject, or ban new users from the registration list.
+- **Role Management**: Users can be assigned roles (owner, admin, user).
+- **Status Management**: Users can have different statuses (whitelisted, banned, pending).
 
 ### Meeting Management
-- **Create Meeting**: Flow lengkap dengan validasi
-  - Input topic → tanggal → waktu → konfirmasi
-  - Format tanggal Indonesia + parsing bahasa Indonesia
-  - Greeting format: "Selamat pagi/siang/sore/malam Bapak/Ibu/Rekan-rekan"
-- **List Meetings**: Tampilkan meeting aktif
-- **Auto Sync**: Sync dari Zoom setiap 30 menit
+- **/meet <topic> <date> <time>**: Creates a Zoom meeting. Supports batch creation for multiple meetings at once.
+- **/zoom_del <zoom_meeting_id>**: Deletes a Zoom meeting. Supports batch deletion.
+- **/sync_meetings**: (Owner) Synchronizes meetings from Zoom to the local database.
+- **/check_expired**: (Owner) Checks for and marks expired meetings.
+- **Create Meeting Button**: A user-friendly, step-by-step flow to create a new Zoom meeting.
+- **List Meetings Button**: Displays a list of all active Zoom meetings.
 
 ### URL Shortener
-- **Multi-provider**: S.id, TinyURL, Bitly
-- **Custom Alias**: Support custom short URLs
-- **Dynamic Configuration**: Provider dapat ditambah tanpa coding
+- **Short URL Button**: A simple flow to shorten any given URL.
+- **Automatic Shortening**: After creating a Zoom meeting, a short URL can be generated for the meeting link.
+- **Multi-Provider Support**: Supports multiple URL shortener services (e.g., S.id, TinyURL, Bitly).
+- **Custom Alias**: Allows users to specify a custom alias for the short URL.
+
+### Backup and Restore
+- **/backup**: (Owner) Creates a backup of the database and shortener configurations.
+- **/restore**: (Owner) Restores the bot's data from a backup file.
+
+### General Commands
+- **/help**: Shows a list of available commands and features.
+- **/about**: Displays information about the bot.
 
 ## 🛠️ Development
 
