@@ -69,6 +69,13 @@ test_*.py
 tests/
 .pytest_cache/
 
+# Dummy/test files
+add_dummy_users.py
+
+# Logs and data directories
+logs/
+data/
+
 # Docker
 Dockerfile*
 docker-compose*.yml
