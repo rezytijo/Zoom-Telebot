@@ -1,7 +1,0 @@
-{
-  "providers": {
-    "test": {
-      "api_key": "test"
-    }
-  }
-}
