@@ -98,4 +98,5 @@ whitelist.txt
 
 # Obsidian vault files
 .vault/
+.obsidian/
 .obsidian

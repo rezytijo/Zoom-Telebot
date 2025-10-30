@@ -172,6 +172,7 @@ Thumbs.db
 
 # Obsidian vault files
 .vault/
+.obsidian/
 .obsidian*.backup
 
 # Directory for log files
