@@ -35,7 +35,7 @@ def user_action_buttons() -> InlineKeyboardMarkup:
     return kb
 
 
-def all_users_buttons(telegram_id: int) -> InlineKeyboardMarkup:
+def manage_users_buttons(telegram_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🗑️ Delete User", callback_data=f"delete_user:{telegram_id}")],
         [InlineKeyboardButton(text="🔄 Change Role", callback_data=f"change_role:{telegram_id}")],
@@ -51,7 +51,7 @@ def role_selection_buttons(telegram_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👨‍💼 Admin", callback_data=f"set_role:{telegram_id}:admin")],
         [InlineKeyboardButton(text="👤 User", callback_data=f"set_role:{telegram_id}:user")],
         [InlineKeyboardButton(text="👤 Guest", callback_data=f"set_role:{telegram_id}:guest")],
-        [InlineKeyboardButton(text="❌ Cancel", callback_data=f"cancel_change:{telegram_id}")],
+        [InlineKeyboardButton(text="⬅️ Kembali", callback_data=f"cancel_change:{telegram_id}")],
     ])
     return kb
 
@@ -61,7 +61,7 @@ def status_selection_buttons(telegram_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⏳ Pending", callback_data=f"set_status:{telegram_id}:pending")],
         [InlineKeyboardButton(text="✅ Whitelisted", callback_data=f"set_status:{telegram_id}:whitelisted")],
         [InlineKeyboardButton(text="🚫 Banned", callback_data=f"set_status:{telegram_id}:banned")],
-        [InlineKeyboardButton(text="❌ Cancel", callback_data=f"cancel_change:{telegram_id}")],
+        [InlineKeyboardButton(text="⬅️ Kembali", callback_data=f"cancel_change:{telegram_id}")],
     ])
     return kb
 

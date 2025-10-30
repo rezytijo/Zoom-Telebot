@@ -5,8 +5,14 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from typing import Optional
+
+def escape_md(text: str) -> str:
+    """Escape special characters for Markdown v2."""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
+
 from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users
-from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, all_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
+from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create, is_owner_or_admin
 from zoom import zoom_client
@@ -20,6 +26,7 @@ import shlex
 import os
 import shutil
 import tempfile
+import html
 
 router = Router()
 # in-memory temp mapping token -> original url (short-lived)
@@ -991,130 +998,54 @@ Silakan masukkan username atau Telegram ID yang ingin Anda cari:"""
 
 
 @router.message(UserSearchStates.waiting_for_query)
-
-
 async def process_user_search_query(msg: Message, state: FSMContext):
-
-
     """Process the user's search query and return results."""
-
-
     if not msg.text:
-
-
         await msg.reply("Mohon masukkan query pencarian.")
-
-
         return
-
-
-
-
 
     query = msg.text.strip()
-
-
     await state.clear()
 
-
-
-
-
     # Search for users
-
-
     users = await search_users(query)
-
-
-
-
-
     if not users:
-
-
-        text = f"❌ **Tidak ada hasil** untuk pencarian: `{query}`"
-
-
-        await msg.reply(text, reply_markup=back_to_main_new_buttons(), parse_mode="Markdown")
-
-
+        text = f"❌ **Tidak ada hasil** untuk pencarian: `{escape_md(query)}`"
+        await msg.reply(text, reply_markup=back_to_main_new_buttons(), parse_mode="MarkdownV2")
         return
 
-
-
-
-
-    text = f"✅ **Hasil Pencarian untuk:** `{query}`\n\n"
-
-
+    # Limit to 10 users to prevent message too long
+    users = users[:10]
+    if len(users) == 10:
+        # Check if there are more
+        all_users = await search_users(query)
+        if len(all_users) > 10:
+            text = f"✅ **Hasil Pencarian untuk:** `{escape_md(query)}` \\(Menampilkan 10 hasil pertama dari {len(all_users)} total\\)\n\n"
+        else:
+            text = f"✅ **Hasil Pencarian untuk:** `{escape_md(query)}`\n\n"
+    else:
+        text = f"✅ **Hasil Pencarian untuk:** `{escape_md(query)}`\n\n"
     buttons = []
-
-
     for u in users:
-
-
         username = u.get('username') or f"ID_{u.get('telegram_id')}"
-
-
         role = u.get('role', 'guest')
-
-
         status = u.get('status', 'pending')
-
-
         telegram_id = u.get('telegram_id')
-
-
-        
-
-
-        text += f"👤 @{username}\n"
-
-
-        text += f"   ├─ ID: `{telegram_id}`\n"
-
-
-        text += f"   ├─ Role: {role.capitalize()}\n"
-
-
-        text += f"   └─ Status: {status.capitalize()}\n\n"
-
-
-
-
-
+        text += f"👤 @{escape_md(username)}\n"
+        text += f"   ├─ ID: `{escape_md(str(telegram_id))}`\n"
+        text += f"   ├─ Role: {escape_md(role.capitalize())}\n"
+        text += f"   └─ Status: {escape_md(status.capitalize())}\n\n"
         buttons.append([
-
-
             InlineKeyboardButton(
-
-
                 text=f"⚙️ Kelola @{username}",
-
-
                 callback_data=f"manage_user:{telegram_id}"
-
-
             )
-
-
         ])
 
-
-
-
-
     buttons.append([InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main_new")])
-
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-
-
-
-
-    await msg.reply(text, reply_markup=keyboard, parse_mode="Markdown")
-
+    await msg.reply(text, reply_markup=keyboard, parse_mode="MarkdownV2")
 
 @router.callback_query(lambda c: c.data == 'short_url')
 async def cb_short_url(c: CallbackQuery, state: FSMContext):
@@ -1781,7 +1712,6 @@ async def build_all_users_message(page: int = 0):
     text += f"🟢 Total user Aktif: {total_aktif}\n"
     text += f"⛔ Total User di banned: {total_banned}\n"
     text += f"📊 Total user: {total_users}\n"
-    text += f"📄 Halaman: {current_page}/{total_pages}\n"
     
     buttons = []
     
@@ -1840,7 +1770,7 @@ async def build_all_users_message(page: int = 0):
     # 7. Tombol Kembali ke Menu
     buttons.append([
         InlineKeyboardButton(
-            text="[ Back To Menu]",
+            text="🏠 Kembali ke Menu Utama",
             callback_data="back_to_main" # Menggunakan callback 'back_to_main' yang sudah ada
         )
     ])
@@ -1905,8 +1835,290 @@ async def cb_all_users(c: CallbackQuery):
         logger.exception("Failed to update /all_users page: %s", e)
         await c.answer("Gagal memuat halaman.", show_alert=True)
 
+async def _show_manage_user_screen(c: CallbackQuery, managed_user_id: int):
+    """Menampilkan layar manajemen untuk user tertentu."""
+    managed_user = await get_user_by_telegram_id(managed_user_id)
+    if not managed_user:
+        await c.answer("User tidak ditemukan.", show_alert=True)
+        return
+        
+    username = html.escape(managed_user.get('username') or f"ID_{managed_user_id}")
+    role = html.escape(managed_user.get('role', 'guest').capitalize())
+    status = html.escape(managed_user.get('status', 'pending').capitalize())
+    
+    text = f"👤 <b>Kelola User: @{username}</b>\n\n"
+    text += f"<b>ID:</b> <code>{managed_user_id}</code>\n"
+    text += f"<b>Role:</b> {role}\n"
+    text += f"<b>Status:</b> {status}\n\n"
+    text += "Pilih tindakan yang ingin Anda lakukan:"
+    
+    keyboard = manage_users_buttons(managed_user_id)
+    await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+
+@router.callback_query(lambda c: c.data and c.data.startswith('manage_user:'))
+async def cb_manage_user(c: CallbackQuery):
+    """
+    Menampilkan informasi detail seorang user dan tombol-tombol manajemen.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil ID user yang akan dikelola dari callback data
+    try:
+        managed_user_id = int(c.data.split(':')[1])
+    except (IndexError, ValueError):
+        await c.answer("ID user tidak valid.", show_alert=True)
+        return
+        
+    await _show_manage_user_screen(c, managed_user_id)
+    await c.answer()
+
+@router.callback_query(lambda c: c.data and c.data.startswith('delete_user:'))
+async def cb_delete_user(c: CallbackQuery):
+    """
+    Menampilkan konfirmasi sebelum menghapus user.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil ID user yang akan dihapus
+    try:
+        managed_user_id = int(c.data.split(':')[1])
+    except (IndexError, ValueError):
+        await c.answer("ID user tidak valid.", show_alert=True)
+        return
+
+    # Jangan biarkan admin menghapus dirinya sendiri
+    if managed_user_id == c.from_user.id:
+        await c.answer("Anda tidak dapat menghapus diri sendiri.", show_alert=True)
+        return
+
+    # Ambil info user untuk pesan konfirmasi
+    managed_user = await get_user_by_telegram_id(managed_user_id)
+    if not managed_user:
+        await c.answer("User tidak ditemukan.", show_alert=True)
+        return
+
+    username = html.escape(managed_user.get('username') or f"ID_{managed_user_id}")
+
+    text = f"⚠️ <b>Peringatan</b> ⚠️\n\nApakah Anda benar-benar yakin ingin menghapus user <b>@{username}</b>? Tindakan ini tidak dapat dibatalkan."
+    
+    # Buat tombol konfirmasi
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ya, Hapus", callback_data=f"confirm_delete:{managed_user_id}"),
+            InlineKeyboardButton(text="❌ Tidak, Batal", callback_data=f"manage_user:{managed_user_id}")
+        ]
+    ])
+    
+    await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('confirm_delete:'))
+async def cb_confirm_delete(c: CallbackQuery):
+    """
+    Menghapus user setelah konfirmasi.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil ID user yang akan dihapus
+    try:
+        managed_user_id = int(c.data.split(':')[1])
+    except (IndexError, ValueError):
+        await c.answer("ID user tidak valid.", show_alert=True)
+        return
+
+    # Hapus user
+    await delete_user(managed_user_id)
+    await c.answer("✅ User berhasil dihapus!", show_alert=True)
+    
+    # Refresh daftar user ke halaman pertama
+    try:
+        text, keyboard = await build_all_users_message(page=0)
+        await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception as e:
+        logger.exception("Gagal me-refresh daftar user setelah penghapusan: %s", e)
+        await _safe_edit_or_fallback(c, "Gagal me-refresh daftar user.")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('change_role:'))
+async def cb_change_role(c: CallbackQuery):
+    """
+    Menampilkan pilihan role untuk user.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil ID user
+    try:
+        managed_user_id = int(c.data.split(':')[1])
+    except (IndexError, ValueError):
+        await c.answer("ID user tidak valid.", show_alert=True)
+        return
+        
+    text = "Pilih role baru untuk user:"
+    keyboard = role_selection_buttons(managed_user_id)
+    await _safe_edit_or_fallback(c, text, reply_markup=keyboard)
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('set_role:'))
+async def cb_set_role(c: CallbackQuery):
+    """
+    Mengatur role baru untuk user.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil ID user dan role baru
+    try:
+        _, managed_user_id_str, new_role = c.data.split(':')
+        managed_user_id = int(managed_user_id_str)
+    except (IndexError, ValueError):
+        await c.answer("Data callback tidak valid.", show_alert=True)
+        return
+
+    # Ambil data user untuk mendapatkan status saat ini
+    managed_user = await get_user_by_telegram_id(managed_user_id)
+    if not managed_user:
+        await c.answer("User tidak ditemukan untuk pembaruan.", show_alert=True)
+        return
+
+    current_status = managed_user.get('status')
+
+    # Update role dengan menyertakan status yang ada
+    await update_user_status(managed_user_id, current_status, new_role)
+    await c.answer(f"✅ Role berhasil diubah menjadi {new_role.capitalize()}!", show_alert=True)
+    
+    # Kembali ke menu manage_user
+    await _show_manage_user_screen(c, managed_user_id)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('change_status:'))
+async def cb_change_status(c: CallbackQuery):
+    """
+    Menampilkan pilihan status untuk user.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil ID user
+    try:
+        managed_user_id = int(c.data.split(':')[1])
+    except (IndexError, ValueError):
+        await c.answer("ID user tidak valid.", show_alert=True)
+        return
+        
+    text = "Pilih status baru untuk user:"
+    keyboard = status_selection_buttons(managed_user_id)
+    await _safe_edit_or_fallback(c, text, reply_markup=keyboard)
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('set_status:'))
+async def cb_set_status(c: CallbackQuery):
+    """
+    Mengatur status baru untuk user.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+
+    # Periksa izin
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Anda tidak memiliki izin.", show_alert=True)
+        return
+        
+    # Ambil ID user dan status baru
+    try:
+        _, managed_user_id_str, new_status = c.data.split(':')
+        managed_user_id = int(managed_user_id_str)
+    except (IndexError, ValueError):
+        await c.answer("Data callback tidak valid.", show_alert=True)
+        return
+
+    # Ambil data user untuk mendapatkan role saat ini
+    managed_user = await get_user_by_telegram_id(managed_user_id)
+    if not managed_user:
+        await c.answer("User tidak ditemukan untuk pembaruan.", show_alert=True)
+        return
+
+    current_role = managed_user.get('role')
+
+    # Update status dengan menyertakan role yang ada
+    await update_user_status(managed_user_id, new_status, current_role)
+    await c.answer(f"✅ Status berhasil diubah menjadi {new_status.capitalize()}!", show_alert=True)
+    
+    # Kembali ke menu manage_user
+    await _show_manage_user_screen(c, managed_user_id)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('cancel_change:'))
+async def cb_cancel_change(c: CallbackQuery):
+    """
+    Membatalkan aksi perubahan role/status dan kembali ke menu manage_user.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi user tidak ditemukan.")
+        return
+        
+    try:
+        managed_user_id = int(c.data.split(':')[1])
+    except (IndexError, ValueError):
+        await c.answer("ID user tidak valid.", show_alert=True)
+        return
+
+    await c.answer("Dibatalkan.")
+    await _show_manage_user_screen(c, managed_user_id)
+
+
 # ----------------------------------------------------------------
-# --- AKHIR DARI KODE BARU ---
+# --- AKHIR DARI FUNGSI manage_user Markdown ---
 # ----------------------------------------------------------------
 
 
