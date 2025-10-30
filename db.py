@@ -646,7 +646,8 @@ def backup_shorteners() -> str:
     backup_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
 
     try:
-        with open('shorteners.json', 'r', encoding='utf-8') as f:
+        shorteners_path = os.path.join(settings.DATA_DIR, "shorteners.json")
+        with open(shorteners_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         json.dump(data, backup_file, indent=2, ensure_ascii=False)
@@ -772,12 +773,15 @@ def restore_shorteners(backup_path: str) -> bool:
         if 'providers' not in data:
             raise ValueError("Invalid shorteners backup: missing 'providers' key")
 
+        shorteners_path = os.path.join(settings.DATA_DIR, "shorteners.json")
+        backup_path_current = shorteners_path + '.backup'
+
         # Backup current file
-        if os.path.exists('shorteners.json'):
-            shutil.copy2('shorteners.json', 'shorteners.json.backup')
+        if os.path.exists(shorteners_path):
+            shutil.copy2(shorteners_path, backup_path_current)
 
         # Write new file
-        with open('shorteners.json', 'w', encoding='utf-8') as f:
+        with open(shorteners_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         logger.info("Shorteners restore completed successfully")
@@ -786,8 +790,9 @@ def restore_shorteners(backup_path: str) -> bool:
     except Exception as e:
         logger.exception("Failed to restore shorteners")
         # Restore backup if it exists
-        if os.path.exists('shorteners.json.backup'):
-            shutil.move('shorteners.json.backup', 'shorteners.json')
+        backup_path_current = os.path.join(settings.DATA_DIR, "shorteners.json.backup")
+        if os.path.exists(backup_path_current):
+            shutil.move(backup_path_current, os.path.join(settings.DATA_DIR, "shorteners.json"))
         raise
 
 

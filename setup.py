@@ -98,14 +98,10 @@ class BotSetup:
         """Validate shortener configuration file."""
         logger.info("🔍 Validating shortener configuration...")
 
-        # Check if shorteners.json exists
-        shorteners_path = Path(__file__).parent / "shorteners.json"
-        data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
+        from config import settings
+        shorteners_path = Path(settings.DATA_DIR) / "shorteners.json"
 
-        if data_shorteners_path.exists():
-            shorteners_path = data_shorteners_path
-            logger.info("Using shorteners.json from data directory")
-        elif not shorteners_path.exists():
+        if not shorteners_path.exists():
             self.log_error("shorteners.json file not found")
             return False
 
@@ -183,13 +179,10 @@ class BotSetup:
         """Configure shortener services with credentials from environment."""
         logger.info("🔗 Configuring shortener services...")
 
-        # Check for shorteners.json
-        shorteners_path = Path(__file__).parent / "shorteners.json"
-        data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
+        from config import settings
+        shorteners_path = Path(settings.DATA_DIR) / "shorteners.json"
 
-        if data_shorteners_path.exists():
-            shorteners_path = data_shorteners_path
-        elif not shorteners_path.exists():
+        if not shorteners_path.exists():
             self.log_error("shorteners.json not found")
             return False
 
@@ -237,16 +230,8 @@ class BotSetup:
                         json.dump(config, f, indent=2, ensure_ascii=False)
                     logger.info("✅ Shortener configuration updated and saved")
                 except PermissionError:
-                    # If we can't write to the original file, try to copy it to data directory
-                    data_shorteners_path = Path(__file__).parent / "data" / "shorteners.json"
-                    try:
-                        data_shorteners_path.parent.mkdir(exist_ok=True)
-                        with open(data_shorteners_path, 'w', encoding='utf-8') as f:
-                            json.dump(config, f, indent=2, ensure_ascii=False)
-                        logger.info("✅ Shortener configuration copied to data directory")
-                    except Exception as copy_error:
-                        self.log_error(f"Failed to save shortener configuration: {copy_error}")
-                        return False
+                    self.log_error(f"Failed to save shortener configuration: Permission denied")
+                    return False
             else:
                 logger.info("ℹ️  No shortener credentials to update")
 

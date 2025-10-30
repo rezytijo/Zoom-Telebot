@@ -15,7 +15,9 @@ class ShortenerError(RuntimeError):
 class DynamicShortener:
 	"""Dynamic shortener that loads providers from configuration"""
 
-	def __init__(self, config_file: str = "shorteners.json"):
+	def __init__(self, config_file: Optional[str] = None):
+		if config_file is None:
+			config_file = os.path.join(settings.DATA_DIR, "shorteners.json")
 		self.config_file = config_file
 		self.providers: Dict[str, Dict[str, Any]] = {}
 		self.default_provider = "tinyurl"
@@ -25,9 +27,7 @@ class DynamicShortener:
 	def _load_config(self):
 		"""Load provider configurations from JSON file"""
 		try:
-			# Check for config file in data directory first
-			data_config_file = os.path.join(os.path.dirname(__file__), "data", os.path.basename(self.config_file))
-			config_file_to_use = data_config_file if os.path.exists(data_config_file) else self.config_file
+			config_file_to_use = self.config_file
 			
 			if os.path.exists(config_file_to_use):
 				with open(config_file_to_use, 'r', encoding='utf-8') as f:
@@ -42,11 +42,11 @@ class DynamicShortener:
 
 				logger.info("Loaded %d shortener providers from %s", len(self.providers), self.config_file)
 			else:
-				logger.warning("Config file %s not found, using built-in providers", self.config_file)
-				self._load_builtin_providers()
+				logger.warning("Config file %s not found, creating default configuration", self.config_file)
+				self._create_default_config()
 		except Exception as e:
 			logger.error("Failed to load shortener config: %s", e)
-			self._load_builtin_providers()
+			self._create_default_config()
 
 	def _load_builtin_providers(self):
 		"""Fallback to built-in providers if config fails"""
@@ -65,6 +65,140 @@ class DynamicShortener:
 		}
 		self.default_provider = "tinyurl"
 		self.fallback_provider = "tinyurl"
+
+	def _create_default_config(self):
+		"""Create default shorteners.json configuration with environment variables"""
+		# Ensure data directory exists
+		os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+		
+		# Build providers config with env values
+		providers = {
+			"tinyurl": {
+				"name": "TinyURL",
+				"description": "Free URL shortener, no configuration needed",
+				"enabled": True,
+				"api_url": "https://tinyurl.com/api-create.php",
+				"method": "get",
+				"params": {
+					"url": "{url}"
+				},
+				"response_type": "text",
+				"success_check": "status==200",
+				"url_extract": "response.strip()"
+			},
+			"sid": {
+				"name": "S.id",
+				"description": "Indonesian URL shortener service",
+				"enabled": bool(getattr(settings, 'sid_id', None) and getattr(settings, 'sid_key', None)),
+				"supports_custom": True,
+				"api_url": "https://api.s.id/v1/links",
+				"method": "post",
+				"headers": {
+					"Content-Type": "application/json"
+				},
+				"auth": {
+					"type": "header",
+					"headers": {
+						"X-Auth-Id": getattr(settings, 'sid_id', ''),
+						"X-Auth-Key": getattr(settings, 'sid_key', '')
+					}
+				},
+				"body": {
+					"long_url": "{url}"
+				},
+				"response_type": "json",
+				"create_success_check": "response.get('code')==200",
+				"id_extract": "response.get('data', {}).get('id', '')",
+				"url_extract": "f\"https://s.id/{response.get('data', {}).get('short', '')}\"",
+				"update_endpoint": {
+					"api_url": "https://api.s.id/v1/links/{id}",
+					"method": "post",
+					"headers": {
+						"Content-Type": "application/json"
+					},
+					"body": {
+						"id": "{id}",
+						"short": "{custom}",
+						"long_url": "{url}"
+					},
+					"response_type": "json",
+					"success_check": "response.get('code')==200",
+					"url_extract": "f\"https://s.id/{response.get('data', {}).get('short', '')}\""
+				}
+			},
+			"bitly": {
+				"name": "Bitly",
+				"description": "Professional URL shortener service",
+				"enabled": bool(getattr(settings, 'bitly_token', None)),
+				"api_url": "https://api-ssl.bitly.com/v4/shorten",
+				"method": "post",
+				"headers": {
+					"Authorization": f"Bearer {getattr(settings, 'bitly_token', '')}",
+					"Content-Type": "application/json"
+				},
+				"body": {
+					"long_url": "{url}"
+				},
+				"response_type": "json",
+				"success_check": "200<=status<300",
+				"url_extract": "response.get('link') or response.get('id')"
+			},
+			"example_provider": {
+				"name": "Example Provider",
+				"description": "Example of how to add a new provider with multi-step custom alias support",
+				"enabled": False,
+				"supports_custom": True,
+				"api_url": "https://api.example.com/create",
+				"method": "post",
+				"headers": {
+					"Content-Type": "application/json",
+					"Authorization": "Bearer {api_token}"
+				},
+				"body": {
+					"url": "{url}"
+				},
+				"response_type": "json",
+				"create_success_check": "status==200 and response.get('success')==True",
+				"url_extract": "response.get('data', {}).get('short_url', '')",
+				"update_endpoint": {
+					"api_url": "https://api.example.com/update/{id}",
+					"method": "post",
+					"headers": {
+						"Content-Type": "application/json",
+						"Authorization": "Bearer {api_token}"
+					},
+					"body": {
+						"id": "{id}",
+						"custom_alias": "{custom}"
+					},
+					"response_type": "json",
+					"success_check": "status==200 and response.get('success')==True",
+					"url_extract": "response.get('data', {}).get('short_url', '')"
+				}
+			}
+		}
+		
+		config = {
+			"providers": providers,
+			"default_provider": "tinyurl",
+			"fallback_provider": "tinyurl"
+		}
+		
+		# Save to file
+		try:
+			with open(self.config_file, 'w', encoding='utf-8') as f:
+				json.dump(config, f, indent=2, ensure_ascii=False)
+			logger.info("Created default shorteners.json at %s", self.config_file)
+		except Exception as e:
+			logger.error("Failed to create default shorteners.json: %s", e)
+			# Fallback to builtin
+			self._load_builtin_providers()
+			return
+		
+		# Load the config
+		self.providers = {k: v for k, v in providers.items() if v.get('enabled', True)}
+		self.default_provider = config.get('default_provider', 'tinyurl')
+		self.fallback_provider = config.get('fallback_provider', 'tinyurl')
 
 	def _format_template(self, template: str, **kwargs) -> str:
 		"""Format template string with variables"""

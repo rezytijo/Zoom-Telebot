@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -61,6 +62,11 @@ async def main():
     await init_db()
     # configure logging early
     logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO), format=settings.LOG_FORMAT)
+    # Add file handler for logging to file with dynamic name
+    log_filename = f"./logs/{datetime.now().strftime('%d-%b-%Y')}-{settings.LOG_LEVEL.upper()}.log"
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setFormatter(logging.Formatter(settings.LOG_FORMAT))
+    logging.getLogger().addHandler(file_handler)
     logger.info("Initializing bot")
 
     # Validate required settings

@@ -61,6 +61,9 @@ class Settings:
     LOG_LEVEL: str = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FORMAT: str = os.getenv('LOG_FORMAT', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+    # Data directory
+    DATA_DIR: str = os.getenv('DATA_DIR', './data')
+
     # S.id settings (if using S.id provider)
     sid_api_key: str | None = os.getenv('SID_API_KEY')
     # S.id API base for link creation/update: can be overridden by SID_API_URL

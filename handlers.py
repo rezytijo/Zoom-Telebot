@@ -62,12 +62,6 @@ def extract_zoom_meeting_id(url: str) -> Optional[str]:
     
     return None
 
-
-def _get_user_info_text(user: dict) -> str:
-    """Helper to format user info text."""
-    return f"ID: {user['telegram_id']}\nUsername: {user['username'] or '-'}\nStatus: {user['status']}\nRole: {user['role']}"
-
-
 async def _get_username_from_telegram_id(telegram_id: str) -> str:
     """Helper to get username from telegram_id for meeting creator display."""
     if telegram_id == 'CreatedFromZoomApp':
@@ -83,48 +77,6 @@ async def _get_username_from_telegram_id(telegram_id: str) -> str:
             return f"User {telegram_id}"
     except (ValueError, TypeError):
         return f"User {telegram_id}"
-
-
-def _format_meeting_time(start_time_str: str) -> str:
-    """Helper to format meeting time in Indonesian format."""
-    if not start_time_str:
-        return "Waktu tidak tersedia"
-    
-    try:
-        # Parse ISO datetime (e.g., "2025-10-30T07:30:00Z")
-        if start_time_str.endswith('Z'):
-            dt = datetime.fromisoformat(start_time_str[:-1])
-        else:
-            dt = datetime.fromisoformat(start_time_str)
-        
-        # Convert to WIB timezone (+7 hours from UTC)
-        wib_tz = timezone(timedelta(hours=7))
-        dt_wib = dt.replace(tzinfo=timezone.utc).astimezone(wib_tz)
-        
-        # Indonesian day names
-        days_id = {
-            0: 'Senin', 1: 'Selasa', 2: 'Rabu', 3: 'Kamis',
-            4: 'Jumat', 5: 'Sabtu', 6: 'Minggu'
-        }
-        
-        # Indonesian month names
-        months_id = {
-            1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
-            7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
-        }
-        
-        day_name = days_id[dt_wib.weekday()]
-        day = dt_wib.day
-        month_name = months_id[dt_wib.month]
-        year = dt_wib.year
-        time_str = dt_wib.strftime("%H:%M")
-        
-        return f"{day_name}, {day} {month_name} {year}\n🕐 {time_str}"
-        
-    except (ValueError, TypeError) as e:
-        logger.warning("Failed to parse meeting time '%s': %s", start_time_str, e)
-        return f"Waktu: {start_time_str}"
-
 
 def _parse_indonesia_date(date_str: str) -> Optional[date]:
     """Parse Indonesian date formats into date object.
@@ -305,7 +257,7 @@ async def cmd_zoom(msg: Message):
     Support batch creation with multiple lines:
     /meet "Meeting 1" "25 Oktober 2025" "14:30"
     "Meeting 2" "26 Oktober 2025" "15:00"
-    "Meeting 3" "27 Oktober 2025" "16:00"
+    "Meeting 3" "27 Oktober 2025" "16:00"   
     """
     if msg.from_user is None or not msg.text:
         await msg.reply("Informasi tidak lengkap")
