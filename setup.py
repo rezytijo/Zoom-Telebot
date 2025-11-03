@@ -9,6 +9,7 @@ Handles complete bot initialization including:
 """
 
 import asyncio
+import compileall
 import json
 import logging
 import os
@@ -341,6 +342,18 @@ class BotSetup:
 
         print("\n" + "="*60)
 
+    def compile_python_files(self):
+        """Compiles all Python files in the current directory."""
+        print("\nCompiling Python files for faster startup...")
+        try:
+            # Get the current directory
+            current_dir = os.getcwd()
+            # Compile all python files in the current directory and subdirectories
+            compileall.compile_dir(current_dir, force=True, quiet=1)
+            print("✅ Python files compiled successfully!")
+        except Exception as e:
+            print(f"❌ Error compiling Python files: {e}")
+
 
 def print_environment_template():
     """Print environment variables template."""
@@ -418,6 +431,10 @@ async def main():
 
         if success:
             print("\n🎉 Bot setup completed successfully!")
+            
+            # Compile Python files
+            setup.compile_python_files()
+            
             print("\n🚀 You can now run the bot with:")
             print("   python main.py                    # Production mode")
             print("   python dev.py run                # Development mode")
@@ -441,5 +458,3 @@ async def main():
 if __name__ == "__main__":
     exit_code = asyncio.run(main())
     sys.exit(exit_code)
-
-

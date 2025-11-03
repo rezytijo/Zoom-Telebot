@@ -33,6 +33,9 @@ FROM base as production
 # Copy application code
 COPY . .
 
+# Compile Python bytecode for faster startup
+RUN python -m compileall .
+
 # Create necessary directories
 RUN mkdir -p /app/data /app/logs
 
@@ -60,6 +63,9 @@ RUN pip install --no-cache-dir \
 
 # Copy application code
 COPY . .
+
+# Compile Python bytecode for faster startup
+RUN python -m compileall .
 
 # Create necessary directories
 RUN mkdir -p /app/data /app/logs

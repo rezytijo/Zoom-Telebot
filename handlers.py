@@ -203,7 +203,7 @@ async def cmd_help(msg: Message):
     is_admin = user and is_allowed_to_create(user)
 
     help_text = (
-        "🤖 <b>Bot Telegram SOC - Bantuan</b>\n\n"
+        "🤖 <b>Bot Telegram ZOOM - Bantuan</b>\n\n"
         "<b>Perintah Umum:</b>\n"
         "<code>/start</code> - Mulai bot dan tampilkan menu utama\n"
         "<code>/help</code> - Tampilkan bantuan ini\n"
@@ -251,7 +251,7 @@ async def cmd_help(msg: Message):
 async def cmd_about(msg: Message):
     """Show a brief about the bot."""
     about_text = (
-        "🤖 <b>Bot Telegram SOC</b>\n\n"
+        "🤖 <b>Bot Telegram ZOOM</b>\n\n"
         "Bot ini dirancang untuk membantu Tim Keamanan Siber (SOC) dalam mengelola meeting Zoom dan user dengan efisien. "
         "Fitur utama meliputi pembuatan meeting Zoom otomatis, manajemen user (khusus admin), dan pembuatan short URL untuk kemudahan akses. "
         "Bot ini memastikan proses operasional yang cepat dan aman, dengan integrasi penuh ke Zoom API. "
@@ -541,7 +541,7 @@ async def cmd_start(msg: Message):
         greeting_text = (
             f"🤖 Halo, {username}! 👋\n\n"
             f"Anda adalah <b>{role}</b> di bot ini.\n\n"
-            "Selamat datang di <b>Bot Telegram SOC</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
+            "Selamat datang di <b>Bot Telegram ZOOM</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
             "Saya bisa membantu untuk:\n"
             "🔹 Menjadwalkan rapat baru\n"
             "🔹 Mengelola user (khusus admin)\n"
@@ -2121,6 +2121,157 @@ async def cb_cancel_change(c: CallbackQuery):
 # --- AKHIR DARI FUNGSI manage_user Markdown ---
 # ----------------------------------------------------------------
 
+# ----------------------------------------------------------------
+# --- KODE BARU UNTUK /REGISTER_LIST DITAMBAHKAN DI SINI ---
+# ----------------------------------------------------------------
+@router.message(Command("register_list", "register_lists"))
+async def cmd_register_list(msg: Message):
+    """
+    Handler for the /register_list command.
+    Displays a list of users with 'pending' status for registration.
+    """
+    if msg.from_user is None:
+        return
+
+    # Check if the user is an admin or owner
+    user = await get_user_by_telegram_id(msg.from_user.id)
+    if not is_owner_or_admin(user):
+        await msg.reply("Anda tidak memiliki izin untuk menggunakan perintah ini.")
+        return
+
+    # Get all users with 'pending' status
+    pending_users = await list_pending_users()
+
+    if not pending_users:
+        await msg.reply("Tidak ada user yang menunggu pendaftaran.")
+        return
+
+    await msg.reply(f"Menampilkan {len(pending_users)} user yang menunggu pendaftaran:")
+
+    # Display the list of users who are registering
+    for user_to_approve in pending_users:
+        user_id = user_to_approve.get('telegram_id')
+        username = user_to_approve.get('username', 'Unknown')
+        role = user_to_approve.get('role', 'guest').capitalize()
+
+        
+        # user_list_text = f"- Username: @{username}\n- ID: `{user_id}`"
+        user_list_text = f"👤 **Username:** @{username}\n"
+        user_list_text += f"    ├ **Role:** `{role}`\n"
+        user_list_text += f"    └ **ID:** `{user_id}`\n"
+
+        # Use pending_user_buttons from keyboards.py
+        keyboard = pending_user_buttons(user_id)
+        
+        await msg.answer(user_list_text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+@router.callback_query(F.data.startswith("accept:"))
+async def cb_accept_user(c: CallbackQuery, bot: Bot):
+    """
+    Accepts a user, changing their status to 'whitelisted' and role to 'user'.
+    """
+    if c.from_user is None:
+        return
+
+    admin_user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(admin_user):
+        await c.answer("Anda tidak memiliki izin untuk melakukan tindakan ini.", show_alert=True)
+        return
+
+    try:
+        user_id_to_accept = int(c.data.split(":")[1])
+    except (IndexError, ValueError):
+        await c.answer("Callback data tidak valid.", show_alert=True)
+        return
+
+    await update_user_status(user_id_to_accept, 'whitelisted', 'user')
+    
+    # Edit the original message to show the user is accepted
+    if c.message and c.message.text:
+        original_text = c.message.text
+        admin_username = c.from_user.username or f"Admin ({c.from_user.id})"
+        new_text = f"{original_text}\n\n✅ Diterima oleh @{admin_username}"
+        await c.message.edit_text(new_text, reply_markup=None, parse_mode="Markdown")
+
+    await c.answer(f"User {user_id_to_accept} telah diterima.", show_alert=True)
+    
+    # Notify the user
+    try:
+        await bot.send_message(user_id_to_accept, "Selamat! Pendaftaran Anda telah diterima. Anda sekarang dapat menggunakan fitur bot.")
+    except Exception as e:
+        logger.error(f"Gagal mengirim notifikasi ke user {user_id_to_accept}: {e}")
+
+@router.callback_query(F.data.startswith("reject:"))
+async def cb_reject_user(c: CallbackQuery, bot: Bot):
+    """
+    Rejects a user by deleting them from the database.
+    """
+    if c.from_user is None:
+        return
+
+    admin_user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(admin_user):
+        await c.answer("Anda tidak memiliki izin untuk melakukan tindakan ini.", show_alert=True)
+        return
+
+    try:
+        user_id_to_reject = int(c.data.split(":")[1])
+    except (IndexError, ValueError):
+        await c.answer("Callback data tidak valid.", show_alert=True)
+        return
+
+    await delete_user(user_id_to_reject)
+
+    if c.message and c.message.text:
+        original_text = c.message.text
+        admin_username = c.from_user.username or f"Admin ({c.from_user.id})"
+        new_text = f"{original_text}\n\n❌ Ditolak oleh @{admin_username}"
+        await c.message.edit_text(new_text, reply_markup=None, parse_mode="Markdown")
+
+    await c.answer(f"User {user_id_to_reject} telah ditolak dan dihapus.", show_alert=True)
+    
+    # Notify the user
+    try:
+        await bot.send_message(user_id_to_reject, "Mohon maaf, pendaftaran Anda ditolak.")
+    except Exception as e:
+        logger.error(f"Gagal mengirim notifikasi ke user {user_id_to_reject}: {e}")
+
+
+@router.callback_query(F.data.startswith("ban:"))
+async def cb_ban_user(c: CallbackQuery, bot: Bot):
+    """
+    Bans a user, changing their status to 'banned'.
+    """
+    if c.from_user is None:
+        return
+
+    admin_user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(admin_user):
+        await c.answer("Anda tidak memiliki izin untuk melakukan tindakan ini.", show_alert=True)
+        return
+
+    try:
+        user_id_to_ban = int(c.data.split(":")[1])
+    except (IndexError, ValueError):
+        await c.answer("Callback data tidak valid.", show_alert=True)
+        return
+
+    await update_user_status(user_id_to_ban, 'banned', 'guest')
+
+    if c.message and c.message.text:
+        original_text = c.message.text
+        admin_username = c.from_user.username or f"Admin ({c.from_user.id})"
+        new_text = f"{original_text}\n\n🚫 Dibanned oleh @{admin_username}"
+        await c.message.edit_text(new_text, reply_markup=None, parse_mode="Markdown")
+
+    await c.answer(f"User {user_id_to_ban} telah dibanned.", show_alert=True)
+    
+    # Notify the user
+    try:
+        await bot.send_message(user_id_to_ban, "Anda telah dibanned dari bot ini.")
+    except Exception as e:
+        logger.error(f"Gagal mengirim notifikasi ke user {user_id_to_ban}: {e}")
 
 # Generic loggers placed at end so they don't prevent specific handlers from being
 # registered earlier in this module. These log incoming commands and callback data
@@ -2144,7 +2295,7 @@ async def cb_back_to_main(c: CallbackQuery):
         greeting_text = (
             f"🤖 Halo, {username}! 👋\n\n"
             f"Anda adalah <b>{role}</b> di bot ini.\n\n"
-            "Selamat datang di <b>Bot Telegram SOC</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
+            "Selamat datang di <b>Bot Telegram ZOOM</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
             "Saya bisa membantu untuk:\n"
             "🔹 Menjadwalkan rapat baru\n"
             "🔹 Mengelola user (khusus admin)\n"
@@ -2186,7 +2337,7 @@ async def cb_back_to_main_new(c: CallbackQuery):
         greeting_text = (
             f"🤖 Halo, {username}! 👋\n\n"
             f"Anda adalah <b>{role}</b> di bot ini.\n\n"
-            "Selamat datang di <b>Bot Telegram SOC</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
+            "Selamat datang di <b>Bot Telegram ZOOM</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
             "Saya bisa membantu untuk:\n"
             "🔹 Menjadwalkan rapat baru\n"
             "🔹 Mengelola user (khusus admin)\n"
@@ -2521,7 +2672,7 @@ async def cb_back_to_main(c: CallbackQuery):
         greeting_text = (
             f"🤖 Halo, {username}! 👋\n\n"
             f"Anda adalah <b>{role}</b> di bot ini.\n\n"
-            "Selamat datang di <b>Bot Telegram SOC</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
+            "Selamat datang di <b>Bot Telegram ZOOM</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
             "Saya bisa membantu untuk:\n"
             "🔹 Menjadwalkan rapat baru\n"
             "🔹 Mengelola user (khusus admin)\n"
@@ -2563,7 +2714,7 @@ async def cb_back_to_main_new(c: CallbackQuery):
         greeting_text = (
             f"🤖 Halo, {username}! 👋\n\n"
             f"Anda adalah <b>{role}</b> di bot ini.\n\n"
-            "Selamat datang di <b>Bot Telegram SOC</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
+            "Selamat datang di <b>Bot Telegram ZOOM</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
             "Saya bisa membantu untuk:\n"
             "🔹 Menjadwalkan rapat baru\n"
             "🔹 Mengelola user (khusus admin)\n"
