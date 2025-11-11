@@ -25,6 +25,11 @@ services:
       - SID_ID=${SID_ID}
       - SID_KEY=${SID_KEY}
       - BITLY_TOKEN=${BITLY_TOKEN}
+      - AGENT_API_PORT=${AGENT_API_PORT:-8767}
+
+    # Ports for agent API polling
+    ports:
+      - "${AGENT_API_PORT:-8767}:${AGENT_API_PORT:-8767}"  # Expose agent API port for external agent polling
 
     # Volumes for persistence
     volumes:    

@@ -42,6 +42,16 @@ async def on_startup(bot: Bot):
     # Start background sync task
     asyncio.create_task(background_sync_meetings())
     logger.info("Background meeting sync task started")
+    # Start agent API server (for agents to poll commands)
+    try:
+        from agent.agent_api import create_app
+        from config import settings
+        app = create_app()
+        # run aiohttp app in background
+        asyncio.create_task(asyncio.to_thread(lambda: __import__('aiohttp').web.run_app(app, host='0.0.0.0', port=settings.AGENT_API_PORT)))
+        logger.info("Agent API server started on port %s", settings.AGENT_API_PORT)
+    except Exception as e:
+        logger.exception("Failed to start agent API server: %s", e)
 
 
 async def main():

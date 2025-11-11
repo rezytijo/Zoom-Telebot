@@ -49,6 +49,28 @@ CREATE_SQL = [
         error_message TEXT -- error if creation failed
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key TEXT,
+        os_type TEXT,
+        last_seen TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_commands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        payload TEXT,
+        status TEXT DEFAULT 'pending', -- pending, running, done, failed
+        result TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 
@@ -243,6 +265,77 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
         return meetings
 
 
+async def add_agent(name: str, base_url: str, api_key: str | None = None, os_type: str | None = None):
+    logger.debug("add_agent name=%s base_url=%s os_type=%s", name, base_url, os_type)
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute(
+            "INSERT INTO agents (name, base_url, api_key, os_type, last_seen) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (name, base_url, api_key, os_type)
+        )
+        await db.commit()
+        agent_id = cur.lastrowid
+    logger.info("Agent '%s' added", name)
+    return agent_id
+
+
+async def add_command(agent_id: int, action: str, payload: str | None = None) -> int:
+    """Queue a command for an agent and return command id."""
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute(
+            "INSERT INTO agent_commands (agent_id, action, payload, status) VALUES (?, ?, ?, 'pending')",
+            (agent_id, action, payload)
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_pending_commands(agent_id: int) -> List[Dict]:
+    """Return pending commands for an agent."""
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT id, action, payload, status, created_at FROM agent_commands WHERE agent_id = ? AND status = 'pending' ORDER BY created_at ASC", (agent_id,))
+        rows = await cur.fetchall()
+        return [dict(id=r[0], action=r[1], payload=r[2], status=r[3], created_at=r[4]) for r in rows]
+
+
+async def update_command_status(command_id: int, status: str, result: str | None = None):
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("UPDATE agent_commands SET status = ?, result = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, result, command_id))
+        await db.commit()
+
+
+async def list_agents() -> List[Dict]:
+    logger.debug("list_agents called")
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT id, name, base_url, api_key, os_type, last_seen FROM agents ORDER BY id DESC")
+        rows = await cur.fetchall()
+        return [dict(id=r[0], name=r[1], base_url=r[2], api_key=r[3], os_type=r[4], last_seen=r[5]) for r in rows]
+
+
+async def get_agent(agent_id: int) -> Optional[Dict]:
+    logger.debug("get_agent %s", agent_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT id, name, base_url, api_key, os_type, last_seen FROM agents WHERE id = ?", (agent_id,))
+        r = await cur.fetchone()
+        if not r:
+            return None
+        return dict(id=r[0], name=r[1], base_url=r[2], api_key=r[3], os_type=r[4], last_seen=r[5])
+
+
+async def remove_agent(agent_id: int):
+    logger.debug("remove_agent %s", agent_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        await db.commit()
+    logger.info("Agent %s removed", agent_id)
+
+
+async def update_agent_last_seen(agent_id: int):
+    logger.debug("update_agent_last_seen %s", agent_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("UPDATE agents SET last_seen = CURRENT_TIMESTAMP WHERE id = ?", (agent_id,))
+        await db.commit()
+
+
 async def update_meeting_status(zoom_meeting_id: str, status: str):
     """Update meeting status (active, deleted, expired)"""
     logger.debug("update_meeting_status zoom_id=%s status=%s", zoom_meeting_id, status)
@@ -250,6 +343,31 @@ async def update_meeting_status(zoom_meeting_id: str, status: str):
         await db.execute("UPDATE meetings SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?", (status, zoom_meeting_id))
         await db.commit()
     logger.info("Meeting %s status updated to %s", zoom_meeting_id, status)
+
+
+async def update_meeting_details(zoom_meeting_id: str, topic: str | None = None, start_time: str | None = None):
+    """Update meeting topic and/or start_time in the local DB."""
+    logger.debug("update_meeting_details zoom_id=%s topic=%s start_time=%s", zoom_meeting_id, topic, start_time)
+    if topic is None and start_time is None:
+        return
+    async with aiosqlite.connect(settings.db_path) as db:
+        if topic is not None and start_time is not None:
+            await db.execute(
+                "UPDATE meetings SET topic = ?, start_time = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                (topic, start_time, zoom_meeting_id)
+            )
+        elif topic is not None:
+            await db.execute(
+                "UPDATE meetings SET topic = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                (topic, zoom_meeting_id)
+            )
+        else:
+            await db.execute(
+                "UPDATE meetings SET start_time = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                (start_time, zoom_meeting_id)
+            )
+        await db.commit()
+    logger.info("Meeting %s details updated", zoom_meeting_id)
 
 
 async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:

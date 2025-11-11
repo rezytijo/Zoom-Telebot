@@ -11,7 +11,7 @@ def escape_md(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
 
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, list_agents, get_agent, add_agent, remove_agent, add_command, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users
 from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create, is_owner_or_admin
@@ -190,6 +190,417 @@ async def cmd_whoami(msg: Message):
         f"Is owner: `{is_owner}`"
     )
     await msg.reply(text, parse_mode="Markdown")
+
+
+# --- Zoom Meeting Management: Manage / Start / Stop / Delete / Edit flows (FSM + callbacks)
+
+class ZoomManageStates(StatesGroup):
+    choosing = State()
+    confirm_stop = State()
+    confirm_delete = State()
+
+
+class ZoomEditStates(StatesGroup):
+    waiting_for_topic = State()
+    waiting_for_date = State()
+    waiting_for_time = State()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('manage_meeting:'))
+async def cb_manage_meeting(c: CallbackQuery):
+    """Show management options for a specific meeting."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+    # find meeting in DB
+    meetings = await list_meetings()
+    meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
+    if not meeting:
+        await c.answer("Meeting tidak ditemukan")
+        return
+
+    topic = meeting.get('topic', 'No Topic')
+    join_url = meeting.get('join_url', '')
+    start_time = meeting.get('start_time', '')
+
+    text = (
+        f"⚙️ Manage Meeting\n\n" 
+        f"Topik: <b>{topic}</b>\n"
+        f"Meeting ID: <code>{meeting_id}</code>\n"
+        f"Waktu Mulai: {start_time}\n"
+        f"Link: {join_url}\n\n"
+        "Pilih tindakan di bawah ini:"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Start Meeting (Open Zoom)", callback_data=f"start_meeting:{meeting_id}"), InlineKeyboardButton(text="▶️ Start on Agent", callback_data=f"start_on_agent:{meeting_id}")],
+        [InlineKeyboardButton(text="🛑 Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
+        [InlineKeyboardButton(text="✏️ Edit Meeting", callback_data=f"edit_meeting:{meeting_id}" )],
+        [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
+    ])
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('start_on_agent:'))
+async def cb_start_on_agent(c: CallbackQuery):
+    """Show agent selection to start/open meeting on a specific agent host."""
+    meeting_id = c.data.split(':', 1)[1]
+    agents = await list_agents()
+    if not agents:
+        await _safe_edit_or_fallback(c, "Tidak ada agent terdaftar. Tambahkan agent dengan /add_agent <name> <base_url> <api_key>.")
+        await c.answer()
+        return
+
+    kb_rows = []
+    for a in agents:
+        kb_rows.append([InlineKeyboardButton(text=f"{a['name']} ({a.get('os_type') or 'unknown'})", callback_data=f"agent_start:{meeting_id}:{a['id']}")])
+    kb_rows.append([InlineKeyboardButton(text="❌ Batal", callback_data=f"manage_meeting:{meeting_id}")])
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await _safe_edit_or_fallback(c, "Pilih agent untuk membuka meeting pada host tersebut:", reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('agent_start:'))
+async def cb_agent_start(c: CallbackQuery):
+    # callback data: agent_start:<meeting_id>:<agent_id>
+    parts = c.data.split(':')
+    if len(parts) < 3:
+        await c.answer("Data agent tidak lengkap")
+        return
+    meeting_id = parts[1]
+    agent_id = int(parts[2])
+    agent = await get_agent(agent_id)
+    if not agent:
+        await _safe_edit_or_fallback(c, "Agent tidak ditemukan")
+        await c.answer()
+        return
+
+    # find meeting join_url
+    meetings = await list_meetings()
+    meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
+    if not meeting:
+        await _safe_edit_or_fallback(c, "Meeting tidak ditemukan")
+        await c.answer()
+        return
+
+    join_url = meeting.get('join_url')
+    if not join_url:
+        await _safe_edit_or_fallback(c, "Meeting tidak memiliki join_url")
+        await c.answer()
+        return
+
+    # queue command for agent to pick up via polling
+    try:
+        cid = await add_command(agent_id, 'open_url', join_url)
+        await _safe_edit_or_fallback(c, f"✅ Perintah telah masuk antrian untuk agent <b>{agent['name']}</b>. Command ID: {cid}", parse_mode='HTML')
+    except Exception as e:
+        logger.exception("Failed to queue command for agent %s: %s", agent_id, e)
+        await _safe_edit_or_fallback(c, f"❌ Gagal mengantri perintah untuk agent: {e}")
+
+    await c.answer()
+
+
+@router.message(Command("add_agent"))
+async def cmd_add_agent(msg: Message):
+    """Add an agent manually: /add_agent <name>
+
+    The agent base_url will be taken from configuration (AGENT_BASE_URL) if set
+    otherwise derived from the server's IP using AGENT_DEFAULT_PORT.
+    """
+    if msg.from_user is None:
+        return
+    # only owner/admin
+    user = await get_user_by_telegram_id(msg.from_user.id)
+    if not is_owner_or_admin(user):
+        await msg.reply("Hanya owner/admin yang dapat menambahkan agent.")
+        return
+    parts = (msg.text or '').split()
+    if len(parts) < 2:
+        await msg.reply("Format: /add_agent <name>")
+        return
+    _, name = parts[:2]
+
+    # generate a strong api key for the agent
+    import secrets, socket
+    api_key = secrets.token_urlsafe(32)
+    os_type = None
+
+    # derive a sensible server URL for agents to poll: prefer hostname discovery
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        try:
+            local_ip = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            local_ip = '127.0.0.1'
+
+    server_url = f"http://{local_ip}:{settings.AGENT_API_PORT}"
+    # agent local listening base_url (if agent should accept direct commands)
+    agent_base_url = settings.AGENT_BASE_URL or f"http://{local_ip}:{settings.AGENT_DEFAULT_PORT}"
+
+    try:
+        agent_id = await add_agent(name, agent_base_url, api_key, os_type)
+
+        # Compose user-facing instruction: polling mode is recommended
+        polling_cmd = f'python agent/agent_server.py --api-key "{api_key}" --server-url "{server_url}"'
+        direct_cmd = f'python agent/agent_server.py --api-key "{api_key}" --port {settings.AGENT_DEFAULT_PORT}'
+
+        resp = (
+            f"✅ Agent '{name}' dibuat. ID: {agent_id}\n\n"
+            f"API Key (simpan dengan aman):\n<code>{api_key}</code>\n\n"
+            "Contoh perintah untuk menjalankan agen (Polling mode — direkomendasikan, agen akan register & poll ke server):\n"
+            f"PowerShell:\n<code>{polling_cmd}</code>\n\n"
+            "Contoh Direct mode (server harus dapat mengakses agen):\n"
+            f"PowerShell:\n<code>{direct_cmd}</code>\n\n"
+            "Catatan: ganti `server_url` di atas dengan URL publik server Anda jika diperlukan (HTTPS direkomendasikan)."
+        )
+
+        await msg.reply(resp, parse_mode='HTML')
+    except Exception as e:
+        logger.exception("Failed to add agent: %s", e)
+        await msg.reply(f"❌ Gagal menambahkan agent: {e}")
+
+
+@router.message(Command("agents"))
+async def cmd_agents(msg: Message):
+    if msg.from_user is None:
+        return
+    user = await get_user_by_telegram_id(msg.from_user.id)
+    if not is_allowed_to_create(user):
+        await msg.reply("Anda tidak memiliki izin melihat agents.")
+        return
+    agents = await list_agents()
+    if not agents:
+        await msg.reply("Belum ada agent terdaftar. Tambah dengan /add_agent <name> <base_url> <api_key>")
+        return
+    text = "📡 <b>Registered Agents</b>\n\n"
+    kb_rows = []
+    for a in agents:
+        text += f"ID: {a['id']} — {a['name']} — {a['base_url']} — OS: {a.get('os_type') or 'unknown'} — last_seen: {a.get('last_seen') or 'N/A'}\n"
+        kb_rows.append([InlineKeyboardButton(text=f"Remove {a['name']}", callback_data=f"remove_agent:{a['id']}")])
+
+    kb_rows.append([InlineKeyboardButton(text="🏠 Kembali", callback_data="back_to_main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await msg.reply(text, parse_mode='HTML', reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('remove_agent:'))
+async def cb_remove_agent(c: CallbackQuery):
+    parts = c.data.split(':')
+    if len(parts) < 2:
+        await c.answer("Data tidak valid")
+        return
+    agent_id = int(parts[1])
+    try:
+        await remove_agent(agent_id)
+        await _safe_edit_or_fallback(c, f"✅ Agent {agent_id} dihapus.")
+    except Exception as e:
+        logger.exception("Failed to remove agent %s: %s", agent_id, e)
+        await _safe_edit_or_fallback(c, f"❌ Gagal menghapus agent: {e}")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('start_meeting:'))
+async def cb_start_meeting(c: CallbackQuery):
+    """Provide link to open Zoom and show Stop/recording controls (local instruction).
+
+    Note: bots cannot send keyboard events to a user's local machine. This flow provides
+    instructions and server-side fallbacks (end meeting via Zoom API) where possible.
+    """
+    meeting_id = c.data.split(':', 1)[1]
+    meetings = await list_meetings()
+    meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
+    if not meeting:
+        await c.answer("Meeting tidak ditemukan")
+        return
+
+    join_url = meeting.get('join_url', '')
+
+    # store local manage state
+    globals().setdefault('MEETING_MANAGE_STATE', {})
+    globals()['MEETING_MANAGE_STATE'].setdefault(str(meeting_id), {'started': True, 'recording': False, 'paused': False})
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Open in Zoom (Client)", url=join_url)],
+        [InlineKeyboardButton(text="🛑 Stop Meeting (Server-side)", callback_data=f"confirm_stop:{meeting_id}" )],
+        [InlineKeyboardButton(text="⏺️ Start/Stop Local Recording (Alt+R)", callback_data=f"toggle_record:{meeting_id}"), InlineKeyboardButton(text="⏸️ Pause/Resume Recording (Alt+P)", callback_data=f"pause_record:{meeting_id}")],
+        [InlineKeyboardButton(text="🏠 Kembali", callback_data=f"manage_meeting:{meeting_id}")]
+    ])
+
+    text = (
+        "🔗 Klik tombol di bawah untuk membuka Zoom (apabila link diarahkan ke aplikasi Zoom client, sistem akan membuka aplikasi).\n\n"
+        "Jika Anda berada di host dan ingin mengakhiri meeting dari sini, gunakan tombol Stop Meeting (server-side).\n"
+        "Untuk kontrol rekaman lokal, gunakan tombol yang memberi instruksi keyboard (Alt+R / Alt+P) pada mesin yang menjalankan Zoom client.\n\n"
+        f"Link meeting: {join_url}"
+    )
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('confirm_stop:'))
+async def cb_confirm_stop(c: CallbackQuery):
+    meeting_id = c.data.split(':', 1)[1]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Ya, End Meeting (Server)", callback_data=f"stop_meeting:{meeting_id}"), InlineKeyboardButton(text="❌ Batal", callback_data=f"manage_meeting:{meeting_id}")]
+    ])
+    await _safe_edit_or_fallback(c, f"Apakah Anda yakin ingin mengakhiri meeting <code>{meeting_id}</code>?", reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('stop_meeting:'))
+async def cb_stop_meeting(c: CallbackQuery):
+    meeting_id = c.data.split(':', 1)[1]
+    await c.answer("Mengakhiri meeting...")
+    try:
+        ok = await zoom_client.end_meeting(meeting_id)
+        if ok:
+            # update DB status
+            await update_meeting_status(meeting_id, 'deleted')
+            await _safe_edit_or_fallback(c, f"✅ Meeting <code>{meeting_id}</code> berhasil diakhiri (server-side).", parse_mode="HTML")
+        else:
+            await _safe_edit_or_fallback(c, f"❌ Gagal mengakhiri meeting {meeting_id} via API. Coba hapus atau cek manual.")
+    except Exception as e:
+        logger.exception("Failed to end meeting %s: %s", meeting_id, e)
+        await _safe_edit_or_fallback(c, f"❌ Error saat mengakhiri meeting: {e}")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('confirm_delete:'))
+async def cb_confirm_delete(c: CallbackQuery):
+    meeting_id = c.data.split(':', 1)[1]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Ya, Hapus Meeting", callback_data=f"delete_meeting:{meeting_id}"), InlineKeyboardButton(text="❌ Batal", callback_data=f"manage_meeting:{meeting_id}")]
+    ])
+    await _safe_edit_or_fallback(c, f"Konfirmasi: hapus meeting <code>{meeting_id}</code>? Ini akan menghapus meeting dari Zoom.", reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('delete_meeting:'))
+async def cb_delete_meeting(c: CallbackQuery):
+    meeting_id = c.data.split(':', 1)[1]
+    await c.answer("Menghapus meeting dari Zoom...")
+    try:
+        ok = await zoom_client.delete_meeting(meeting_id)
+        if ok:
+            await update_meeting_status(meeting_id, 'deleted')
+            await _safe_edit_or_fallback(c, f"✅ Meeting <code>{meeting_id}</code> dihapus dari Zoom dan ditandai di DB.", parse_mode="HTML")
+        else:
+            await _safe_edit_or_fallback(c, f"❌ Gagal menghapus meeting {meeting_id} via API.")
+    except Exception as e:
+        logger.exception("Failed to delete meeting %s: %s", meeting_id, e)
+        await _safe_edit_or_fallback(c, f"❌ Error saat menghapus meeting: {e}")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('edit_meeting:'))
+async def cb_edit_meeting(c: CallbackQuery, state: FSMContext):
+    meeting_id = c.data.split(':', 1)[1]
+    await state.update_data(edit_meeting_id=meeting_id)
+    await _safe_edit_or_fallback(c, "✏️ Silakan kirim <b>Topik</b> baru untuk meeting ini:", parse_mode="HTML")
+    await state.set_state(ZoomEditStates.waiting_for_topic)
+    await c.answer()
+
+
+@router.message(ZoomEditStates.waiting_for_topic)
+async def edit_meeting_topic(msg: Message, state: FSMContext):
+    if not msg.text:
+        await msg.reply("Silakan kirim topik meeting sebagai teks.")
+        return
+    await state.update_data(new_topic=msg.text.strip())
+    await msg.reply("Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", parse_mode="HTML")
+    await state.set_state(ZoomEditStates.waiting_for_date)
+
+
+@router.message(ZoomEditStates.waiting_for_date)
+async def edit_meeting_date(msg: Message, state: FSMContext):
+    d = _parse_indonesia_date(msg.text)
+    if not d:
+        await msg.reply("Format tanggal tidak dikenal. Gunakan DD-MM-YYYY atau '31 Desember 2025'.")
+        return
+    await state.update_data(new_date=str(d))
+    await msg.reply("Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", parse_mode="HTML")
+    await state.set_state(ZoomEditStates.waiting_for_time)
+
+
+@router.message(ZoomEditStates.waiting_for_time)
+async def edit_meeting_time(msg: Message, state: FSMContext):
+    t = _parse_time_24h(msg.text)
+    if not t:
+        await msg.reply("Format waktu tidak valid. Gunakan HH:MM (24 jam).")
+        return
+
+    data = await state.get_data()
+    meeting_id = data.get('edit_meeting_id')
+    topic = data.get('new_topic')
+    date_str = data.get('new_date')
+    if not (meeting_id and topic and date_str):
+        await msg.reply("Data edit tidak lengkap. Mulai lagi.")
+        await state.clear()
+        return
+
+    # Combine date and time into ISO with WIB timezone
+    d = datetime.fromisoformat(date_str)
+    dt = datetime.combine(d.date(), t)
+    tz = timezone(timedelta(hours=7))
+    dt = dt.replace(tzinfo=tz)
+    start_time_iso = dt.isoformat()
+
+    await msg.reply("Memperbarui meeting... Mohon tunggu.")
+    try:
+        # Call Zoom API to update
+        resp = await zoom_client.update_meeting(meeting_id, topic=topic, start_time=start_time_iso)
+        # Update local DB
+        await update_meeting_details(meeting_id, topic=topic, start_time=start_time_iso)
+        await msg.reply(f"✅ Meeting diperbarui. (meeting_id={meeting_id})")
+    except Exception as e:
+        logger.exception("Failed to update meeting %s: %s", meeting_id, e)
+        await msg.reply(f"❌ Gagal memperbarui meeting: {e}")
+
+    await state.clear()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('toggle_record:'))
+async def cb_toggle_record(c: CallbackQuery):
+    meeting_id = c.data.split(':', 1)[1]
+    state_map = globals().setdefault('MEETING_MANAGE_STATE', {})
+    st = state_map.setdefault(str(meeting_id), {'started': False, 'recording': False, 'paused': False})
+    # toggle recording flag
+    st['recording'] = not bool(st.get('recording'))
+    st['paused'] = False
+    if st['recording']:
+        text = "🔴 Recording started (local). Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk memulai perekaman lokal."
+    else:
+        text = "⏹️ Recording stopped (local). Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk menghentikan perekaman lokal."
+
+    await _safe_edit_or_fallback(c, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data=f"manage_meeting:{meeting_id}")]]))
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('pause_record:'))
+async def cb_pause_record(c: CallbackQuery):
+    meeting_id = c.data.split(':', 1)[1]
+    state_map = globals().setdefault('MEETING_MANAGE_STATE', {})
+    st = state_map.setdefault(str(meeting_id), {'started': False, 'recording': False, 'paused': False})
+    # toggle pause flag
+    if not st.get('recording'):
+        await _safe_edit_or_fallback(c, "⚠️ Rekaman belum aktif. Gunakan Start Recording terlebih dahulu.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data=f"manage_meeting:{meeting_id}")]]))
+        await c.answer()
+        return
+    st['paused'] = not bool(st.get('paused'))
+    if st['paused']:
+        text = "⏸️ Recording paused. Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk pause."
+    else:
+        text = "▶️ Recording resumed. Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk resume."
+
+    await _safe_edit_or_fallback(c, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data=f"manage_meeting:{meeting_id}")]]))
+    await c.answer()
+
 
 
 @router.message(Command("help"))
@@ -954,12 +1365,24 @@ async def cb_list_meetings(c: CallbackQuery):
             
             text += "\n"
         
+        # Build an inline keyboard with Manage buttons per meeting (one button per meeting)
+        kb_rows = []
+        for m_rec in meetings:
+            mid = m_rec.get('zoom_meeting_id') or ''
+            topic_short = (m_rec.get('topic') or 'No Topic')[:30]
+            if mid:
+                kb_rows.append([InlineKeyboardButton(text=f"⚙️ Manage: {topic_short}", callback_data=f"manage_meeting:{mid}")])
+
+        # add navigation / back buttons
+        kb_rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="list_meetings"), InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main")])
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
         # Try to edit the message directly for refresh, if fails, don't send new message
         from aiogram.types import Message as AiMessage
         m = getattr(c, 'message', None)
         if isinstance(m, AiMessage):
             try:
-                await m.edit_text(text, parse_mode="HTML", reply_markup=list_meetings_buttons())
+                await m.edit_text(text, parse_mode="HTML", reply_markup=kb)
             except Exception:
                 await c.answer("Gagal refresh daftar meeting, coba lagi")
         else:

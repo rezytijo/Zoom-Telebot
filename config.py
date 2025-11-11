@@ -64,6 +64,17 @@ class Settings:
     # Data directory
     DATA_DIR: str = os.getenv('DATA_DIR', './data')
 
+    # Agent API server for reverse-polling agents
+    AGENT_API_PORT: int = _to_int(os.getenv('AGENT_API_PORT')) or 8767
+    # Default base URL agents may listen on (used when adding agent with no base_url)
+    # Set e.g. AGENT_BASE_URL=http://192.168.1.10:8766 in .env to specify an accessible base URL
+    AGENT_BASE_URL: str | None = os.getenv('AGENT_BASE_URL')
+    # Default agent listen port when deriving base_url from server IP
+    AGENT_DEFAULT_PORT: int = _to_int(os.getenv('AGENT_DEFAULT_PORT')) or 8766
+    # How long (seconds) server will hold a polling /agent/poll request before returning empty list
+    # This enables light long-polling so agents receive commands as they arrive.
+    AGENT_POLL_WAIT_SECONDS: int = _to_int(os.getenv('AGENT_POLL_WAIT_SECONDS')) or 20
+
     # S.id settings (if using S.id provider)
     sid_api_key: str | None = os.getenv('SID_API_KEY')
     # S.id API base for link creation/update: can be overridden by SID_API_URL

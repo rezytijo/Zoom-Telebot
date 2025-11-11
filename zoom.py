@@ -204,5 +204,63 @@ class ZoomClient:
                     self.logger.warning("Unexpected status %s for delete_meeting %s", resp.status, meeting_id)
                     return False
 
+    async def update_meeting(self, meeting_id: str, topic: str | None = None, start_time: str | None = None) -> Dict[str, Any]:
+        """Patch/update a meeting's topic and/or start_time via Zoom API.
+
+        This uses the PATCH /meetings/{meetingId} endpoint.
+        """
+        self.logger.info("Updating meeting %s topic=%s start_time=%s", meeting_id, topic, start_time)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        payload: Dict[str, Any] = {}
+        if topic is not None:
+            payload["topic"] = topic
+        if start_time is not None:
+            payload["start_time"] = start_time
+            payload["timezone"] = "Asia/Jakarta"
+
+        if not payload:
+            raise RuntimeError("No fields provided to update")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(url, json=payload, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status >= 400:
+                    self.logger.error("Zoom update_meeting returned %s: %s", resp.status, text)
+                    raise RuntimeError(f"Zoom API error {resp.status}: {text}")
+                # Zoom returns 204 No Content on success for patch; return minimal info
+                if resp.status in (200, 204):
+                    return {"ok": True, "status": resp.status}
+                return {"ok": False, "status": resp.status, "body": text}
+
+    async def end_meeting(self, meeting_id: str) -> bool:
+        """Request Zoom to end an ongoing meeting (meeting status endpoint).
+
+        Uses the meeting status endpoint: PUT /meetings/{meetingId}/status with {"action":"end"}.
+        If not supported by account/token, falls back to deleting the meeting.
+        """
+        self.logger.info("Ending meeting %s via status endpoint", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/status"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {"action": "end"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, json=payload, headers=headers) as resp:
+                if resp.status in (204, 200):
+                    self.logger.info("Meeting %s ended successfully via status endpoint", meeting_id)
+                    return True
+                # Some accounts may not support this endpoint; try delete as a fallback
+                text = await resp.text()
+                self.logger.warning("End meeting returned %s: %s - attempting delete as fallback", resp.status, text)
+        # fallback: attempt delete
+        try:
+            return await self.delete_meeting(meeting_id)
+        except Exception as e:
+            self.logger.exception("Fallback delete failed for meeting %s: %s", meeting_id, e)
+            return False
+
 
 zoom_client = ZoomClient()
