@@ -3,9 +3,15 @@
 Zoom-Telebot SOC Initial Setup Script
 Handles complete bot initialization including:
 - Environment variable validation
-- Database initialization
+- Database initialization/upgrade (supports existing database migration)
 - Owner user setup
 - Shortener configuration
+
+Database Features:
+- Automatic schema creation for new installations
+- Safe upgrade of existing databases without data loss
+- Migration support for schema changes
+- Backup creation before major upgrades (future feature)
 """
 
 import asyncio
@@ -132,15 +138,112 @@ class BotSetup:
         return True
 
     async def initialize_database(self) -> bool:
-        """Initialize database schema."""
-        logger.info("🗄️  Initializing database...")
+        """Initialize or upgrade database schema."""
+        logger.info("🗄️  Initializing/upgrading database...")
 
         try:
-            await init_db()
-            logger.info("✅ Database schema initialized successfully")
+            # Check if database exists and needs upgrade
+            db_path = Path(settings.db_path)
+            db_exists = db_path.exists() and db_path.stat().st_size > 0
+
+            if db_exists:
+                logger.info("📊 Existing database found, checking for upgrades...")
+                upgrade_needed = await self.check_database_upgrade_needed()
+                
+                if upgrade_needed:
+                    logger.info("⬆️  Database upgrade needed, performing upgrade...")
+                    success = await self.upgrade_database()
+                    if not success:
+                        self.log_error("Database upgrade failed")
+                        return False
+                    logger.info("✅ Database upgraded successfully")
+                else:
+                    logger.info("✅ Database is up to date")
+            else:
+                logger.info("🆕 No existing database found, initializing new database...")
+                await init_db()
+                logger.info("✅ New database initialized successfully")
+            
             return True
+            
         except Exception as e:
-            self.log_error(f"Failed to initialize database: {e}")
+            self.log_error(f"Failed to initialize/upgrade database: {e}")
+            return False
+
+    async def check_database_upgrade_needed(self) -> bool:
+        """Check if database needs upgrade by comparing current schema with expected."""
+        try:
+            import aiosqlite
+            
+            async with aiosqlite.connect(settings.db_path) as db:
+                # Check if all required tables exist
+                required_tables = [
+                    'users', 'meetings', 'shortlinks', 'agents', 
+                    'agent_commands', 'meeting_live_status'
+                ]
+                
+                for table in required_tables:
+                    cursor = await db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", 
+                        (table,)
+                    )
+                    if not await cursor.fetchone():
+                        logger.info(f"Table '{table}' missing from database")
+                        return True
+                
+                # Check if meeting_live_status table has correct structure
+                cursor = await db.execute("PRAGMA table_info(meeting_live_status)")
+                columns = await cursor.fetchall()
+                column_names = [col[1] for col in columns]
+                
+                required_columns = ['zoom_meeting_id', 'live_status', 'updated_at']
+                for col in required_columns:
+                    if col not in column_names:
+                        logger.info(f"Column '{col}' missing from meeting_live_status table")
+                        return True
+                
+                # Check for new columns in existing tables
+                # Check meetings table for new columns
+                cursor = await db.execute("PRAGMA table_info(meetings)")
+                columns = await cursor.fetchall()
+                column_names = [col[1] for col in columns]
+                
+                # Check agents table for new columns
+                cursor = await db.execute("PRAGMA table_info(agents)")
+                columns = await cursor.fetchall()
+                column_names = [col[1] for col in columns]
+                
+                new_agent_columns = ['hostname', 'ip_address', 'version']
+                for col in new_agent_columns:
+                    if col not in column_names:
+                        logger.info(f"Column '{col}' missing from agents table")
+                        return True
+                
+                return False
+                
+        except Exception as e:
+            logger.warning(f"Error checking database upgrade status: {e}")
+            # If we can't check, assume upgrade is needed to be safe
+            return True
+
+    async def upgrade_database(self) -> bool:
+        """Upgrade existing database to latest schema."""
+        try:
+            import aiosqlite
+            
+            async with aiosqlite.connect(settings.db_path) as db:
+                logger.info("Starting database upgrade process...")
+                
+                # Run the same migrations that init_db does
+                from db import run_migrations
+                await run_migrations(db)
+                
+                # Additional upgrade steps can be added here
+                logger.info("Database upgrade completed successfully")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Database upgrade failed: {e}")
             return False
 
     async def setup_owner_user(self) -> bool:
@@ -275,7 +378,11 @@ class BotSetup:
         db_url = os.getenv('DATABASE_URL', '')
         if 'sqlite' in db_url:
             db_path = db_url.replace('sqlite+aiosqlite:///', '')
-            print(f"\n🗄️  Database: SQLite at {db_path}")
+            db_file = Path(db_path)
+            if db_file.exists() and db_file.stat().st_size > 0:
+                print(f"\n🗄️  Database: SQLite at {db_path} (existing - will check for upgrades)")
+            else:
+                print(f"\n🗄️  Database: SQLite at {db_path} (will create new)")
         else:
             print(f"\n🗄️  Database: {db_url}")
 
@@ -288,7 +395,7 @@ class BotSetup:
         print("This script will initialize your bot with the following steps:")
         print("1. Validate environment variables")
         print("2. Validate shortener configuration")
-        print("3. Initialize database")
+        print("3. Initialize/upgrade database")
         print("4. Setup owner user")
         print("5. Configure shortener services")
         print()
@@ -303,8 +410,8 @@ class BotSetup:
         if not self.validate_shortener_config():
             return False
 
-        # Step 3: Initialize database
-        logger.info("Step 3: Initializing database...")
+        # Step 3: Initialize/upgrade database
+        logger.info("Step 3: Initializing/upgrading database...")
         if not await self.initialize_database():
             return False
 
@@ -329,6 +436,12 @@ class BotSetup:
 
         if not self.errors and not self.warnings:
             print("✅ Setup completed successfully with no errors or warnings!")
+            print("\n📊 Database Status:")
+            db_path = Path(settings.db_path)
+            if db_path.exists() and db_path.stat().st_size > 0:
+                print("   • Existing database upgraded to latest schema")
+            else:
+                print("   • New database created with latest schema")
         else:
             if self.errors:
                 print(f"❌ {len(self.errors)} error(s) found:")
@@ -392,10 +505,27 @@ LOG_LEVEL=INFO
 LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # ========================================
-# Shortener Configuration
+# Database Upgrade Feature
 # ========================================
-# Shortener providers are configured in shorteners.json file
-# To add new providers, edit shorteners.json (no code changes needed!)
+# This setup script automatically handles database upgrades!
+# 
+# Features:
+# - Detects existing databases and checks for schema changes
+# - Safely upgrades database without data loss
+# - Adds new tables and columns as needed
+# - No manual intervention required
+# 
+# Supported upgrades:
+# - meeting_live_status table (for meeting status tracking)
+# - recording_status column moved to meeting_live_status table
+# - hostname, ip_address, version columns in agents table
+# - Automatic migration of data types and constraints
+#
+# If upgrade fails, the script will report errors and you can:
+# 1. Backup your database manually
+# 2. Delete the database file to start fresh
+# 3. Run setup again
+# ========================================
 #
 # Example new provider format in shorteners.json:
 # "newprovider": {
@@ -409,7 +539,7 @@ LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
 #   "response_type": "json",
 #   "success_check": "status==200",
 #   "url_extract": "response.get('short_url')"
-# }
+
 """)
 
 

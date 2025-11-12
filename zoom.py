@@ -124,6 +124,56 @@ class ZoomClient:
             return self._token
         return await self._get_jwt_token()
 
+    async def get_meeting(self, meeting_id: str) -> Optional[Dict[str, Any]]:
+        """Get meeting details from Zoom API.
+        
+        Returns meeting info including status, or None if not found.
+        """
+        self.logger.debug("Getting meeting details for %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.logger.debug("Meeting %s details retrieved", meeting_id)
+                    return data
+                elif resp.status == 404:
+                    self.logger.warning("Meeting %s not found", meeting_id)
+                    return None
+                else:
+                    text = await resp.text()
+                    self.logger.error("Failed to get meeting %s: %s - %s", meeting_id, resp.status, text)
+                    return None
+
+    async def get_meeting_recording_status(self, meeting_id: str) -> Optional[Dict[str, Any]]:
+        """Get recording status for a meeting from Zoom API.
+        
+        Returns recording information if available, or None.
+        Note: This gets completed recordings, not real-time recording status.
+        """
+        self.logger.debug("Getting recording status for meeting %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/recordings"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.logger.debug("Recording status for meeting %s retrieved", meeting_id)
+                    return data
+                elif resp.status == 404:
+                    self.logger.debug("No recordings found for meeting %s", meeting_id)
+                    return None
+                else:
+                    text = await resp.text()
+                    self.logger.warning("Failed to get recording status for meeting %s: %s - %s", meeting_id, resp.status, text)
+                    return None
+
+
     async def create_meeting(self, user_id: Optional[str] = "me", topic: str = "Meeting from Bot", start_time: Optional[str] = None, duration: int = 120) -> Dict[str, Any]:
         self.logger.info("Creating meeting for user_id=%s topic=%s start_time=%s", user_id, topic, start_time)
         token = await self.ensure_token()

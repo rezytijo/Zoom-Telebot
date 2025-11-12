@@ -4,14 +4,14 @@ from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-from typing import Optional
+from typing import Optional, List, Dict
 
 def escape_md(text: str) -> str:
     """Escape special characters for Markdown v2."""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
 
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, list_agents, count_agents, get_agent, add_agent, remove_agent, add_command, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, list_agents, count_agents, get_agent, add_agent, remove_agent, add_command, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id
 from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create, is_owner_or_admin
@@ -19,6 +19,7 @@ from zoom import zoom_client
 import logging
 
 import re
+import aiosqlite
 from datetime import datetime, date, time, timedelta, timezone
 from urllib.parse import urlparse
 import uuid
@@ -175,6 +176,49 @@ def _parse_time_24h(time_str: str) -> Optional[time]:
         return None
 
 
+def _filter_online_agents(agents: List[Dict], online_threshold_minutes: int = 5) -> List[Dict]:
+    """Filter agents to only include those that are online (seen within the last threshold minutes).
+    
+    Args:
+        agents: List of agent dictionaries from database
+        online_threshold_minutes: How many minutes ago an agent must have been seen to be considered online
+        
+    Returns:
+        List of online agents only
+    """
+    if not agents:
+        return []
+    
+    from datetime import datetime, timedelta
+    
+    # Calculate threshold time
+    threshold_time = datetime.now() - timedelta(minutes=online_threshold_minutes)
+    
+    online_agents = []
+    for agent in agents:
+        last_seen = agent.get('last_seen')
+        if last_seen:
+            try:
+                # Parse the last_seen timestamp
+                # Assuming format is ISO string like '2025-11-13 00:17:25'
+                if isinstance(last_seen, str):
+                    last_seen_dt = datetime.fromisoformat(last_seen.replace(' ', 'T'))
+                elif isinstance(last_seen, datetime):
+                    last_seen_dt = last_seen
+                else:
+                    continue
+                
+                # Check if agent was seen within threshold
+                if last_seen_dt >= threshold_time:
+                    online_agents.append(agent)
+                    
+            except (ValueError, TypeError):
+                # If we can't parse the timestamp, assume offline
+                continue
+    
+    return online_agents
+
+
 @router.message(Command("whoami"))
 async def cmd_whoami(msg: Message):
     """Diagnostic command: show sender id, username, configured owner_id and whether they match."""
@@ -270,8 +314,18 @@ async def cb_manage_meeting(c: CallbackQuery):
         "Pilih tindakan di bawah ini:"
     )
 
+    # Check live status to determine button text
+    # First sync with Zoom API to get accurate status
+    live_status = await sync_meeting_live_status_from_zoom(zoom_client, meeting_id)
+    if live_status == 'started':
+        start_button_text = "🎛️ Control Meeting"
+        start_callback = f"control_meeting:{meeting_id}"
+    else:
+        start_button_text = "▶️ Start Meeting on Agent"
+        start_callback = f"start_on_agent:{meeting_id}"
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Start Meeting on Agent", callback_data=f"start_on_agent:{meeting_id}")],
+        [InlineKeyboardButton(text=start_button_text, callback_data=start_callback)],
         [InlineKeyboardButton(text="🗑️ Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
         [InlineKeyboardButton(text="✏️ Edit Meeting", callback_data=f"edit_meeting:{meeting_id}" )],
         [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
@@ -285,9 +339,9 @@ async def cb_manage_meeting(c: CallbackQuery):
 async def cb_start_on_agent(c: CallbackQuery):
     """Show agent selection to start/open meeting on a specific agent host."""
     meeting_id = c.data.split(':', 1)[1]
-    agents = await list_agents()
+    agents = _filter_online_agents(await list_agents())
     if not agents:
-        await _safe_edit_or_fallback(c, "Tidak ada agent terdaftar. Tambahkan agent dengan /add_agent <name> <base_url> <api_key>.")
+        await _safe_edit_or_fallback(c, "Tidak ada agent yang sedang online. Pastikan agent sudah terhubung dan polling ke server.")
         await c.answer()
         return
 
@@ -297,6 +351,88 @@ async def cb_start_on_agent(c: CallbackQuery):
     kb_rows.append([InlineKeyboardButton(text="❌ Batal", callback_data=f"manage_meeting:{meeting_id}")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await _safe_edit_or_fallback(c, "Pilih agent untuk membuka meeting pada host tersebut:", reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('control_meeting:'))
+async def cb_control_meeting(c: CallbackQuery, state: FSMContext):
+    """Show control interface for an already started meeting."""
+    meeting_id = c.data.split(':', 1)[1]
+    
+    # find meeting
+    meetings = await list_meetings()
+    meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
+    if not meeting:
+        await c.answer("Meeting tidak ditemukan")
+        return
+
+    # Check if meeting is actually started
+    live_status = await get_meeting_live_status(meeting_id)
+    if live_status != 'started':
+        await _safe_edit_or_fallback(c, "Meeting belum dimulai. Gunakan 'Start Meeting on Agent' terlebih dahulu.")
+        await c.answer()
+        return
+
+    # Get current recording status and check if recording has ever been started
+    recording_status = await get_meeting_recording_status(meeting_id) or 'stopped'
+    
+    # Get agent_id for this meeting
+    agent_id = await get_meeting_agent_id(meeting_id)
+    
+    # Check if recording has ever been started (has recording history)
+    async with aiosqlite.connect(settings.db_path) as db:
+        cursor = await db.execute("SELECT recording_started_at FROM meeting_live_status WHERE zoom_meeting_id = ?", (meeting_id,))
+        row = await cursor.fetchone()
+        has_recording_history = row is not None and row[0] is not None
+    
+    # Set state to controlling
+    await state.set_state(ZoomManageStates.controlling_meeting)
+    await state.update_data(meeting_id=meeting_id, agent_id=agent_id)
+
+    text = (
+        f"🎛️ <b>Control Meeting {meeting.get('topic', 'Unknown Meeting')}</b>\n\n"
+        f"Status: Sedang Berlangsung\n"
+        f"Recording: {recording_status.title()}\n"
+    )
+    
+    # Add agent info if available
+    if agent_id:
+        try:
+            agent = await get_agent(agent_id)
+            if agent:
+                text += f"Agent: {agent['name']}\n"
+        except Exception as e:
+            logger.error("Failed to get agent info: %s", e)
+    
+    text += "\nGunakan kontrol di bawah ini:"
+
+    # Build keyboard based on recording status
+    kb_rows = [
+        [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")]
+    ]
+    
+    # Recording controls
+    if recording_status == 'recording':
+        record_button = InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"toggle_record:{meeting_id}")
+        pause_button = InlineKeyboardButton(text="⏸️ Pause Recording", callback_data=f"pause_record:{meeting_id}")
+    elif recording_status == 'paused':
+        record_button = InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"toggle_record:{meeting_id}")
+        pause_button = InlineKeyboardButton(text="▶️ Resume Recording", callback_data=f"pause_record:{meeting_id}")
+    else:  # stopped
+        record_button = InlineKeyboardButton(text="⏺️ Start Recording", callback_data=f"toggle_record:{meeting_id}")
+        # Resume button is not shown when stopped - only when paused
+        pause_button = None
+    
+    if pause_button:
+        kb_rows.append([record_button, pause_button])
+    else:
+        kb_rows.append([record_button])
+    
+    kb_rows.append([InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
     await c.answer()
 
 
@@ -354,6 +490,9 @@ async def cb_agent_start(c: CallbackQuery, state: FSMContext):
         
         # Transition to controlling meeting state
         await state.set_state(ZoomManageStates.controlling_meeting)
+        
+        # Update live status to started with agent_id
+        await update_meeting_live_status(meeting_id, 'started', agent_id)
         
         # Show meeting control interface
         text = (
@@ -703,6 +842,8 @@ async def cb_stop_meeting(c: CallbackQuery, state: FSMContext):
         if ok:
             # update DB status
             await update_meeting_status(meeting_id, 'deleted')
+            # Update live status to ended
+            await update_meeting_live_status(meeting_id, 'ended')
             
             # Clear FSM state
             await state.clear()
@@ -1013,47 +1154,40 @@ async def cb_toggle_record(c: CallbackQuery, state: FSMContext):
     if current_status is None:
         current_status = 'stopped'
     
+    # Get meeting data from FSM state
+    data = await state.get_data()
+    topic = data.get('topic', 'Unknown Meeting')
+    agent_id = data.get('agent_id')
+    
     # Toggle recording status
     if current_status == 'stopped':
         new_status = 'recording'
-        status_text = "🔴 Recording started (local)"
-        instruction = "Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk memulai perekaman lokal."
-        button_text = "⏹️ Stop Recording"
+        status_text = "🔴 Recording started"
+        action = "start-record"
     elif current_status == 'recording':
         new_status = 'stopped'
-        status_text = "⏹️ Recording stopped (local)"
-        instruction = "Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk menghentikan perekaman lokal."
-        button_text = "⏺️ Start Recording"
+        status_text = "⏹️ Recording stopped"
+        action = "stop-record"
     else:  # paused
         new_status = 'recording'
-        status_text = "▶️ Recording resumed (local)"
-        instruction = "Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk melanjutkan perekaman lokal."
-        button_text = "⏹️ Stop Recording"
+        status_text = "▶️ Recording resumed"
+        action = "resume-record"
+    
+    # Send hotkey command to agent if agent_id is available
+    if agent_id:
+        try:
+            payload = json.dumps({})  # Empty payload since action is now in the action field
+            await add_command(agent_id, action, payload)
+            logger.info("Sent %s command to agent %s for meeting %s", action, agent_id, meeting_id)
+        except Exception as e:
+            logger.error("Failed to send command to agent %s: %s", agent_id, e)
+            # Continue with database update even if command fails
     
     # Update database
     await update_meeting_recording_status(meeting_id, new_status)
     
-    # Get meeting data from FSM state
-    data = await state.get_data()
-    topic = data.get('topic', 'Unknown Meeting')
-    agent_name = data.get('agent_name', 'Unknown Agent')
-    
-    text = (
-        f"🎥 <b>Meeting Control</b>\n\n"
-        f"Meeting: <b>{topic}</b>\n"
-        f"Agent: <b>{agent_name}</b>\n\n"
-        f"{status_text}\n{instruction}"
-    )
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
-        [InlineKeyboardButton(text=button_text, callback_data=f"toggle_record:{meeting_id}"), 
-         InlineKeyboardButton(text="⏸️ Pause/Resume Recording", callback_data=f"pause_record:{meeting_id}")],
-        [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
-    ])
-    
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
-    await c.answer()
+    # Refresh the control interface
+    await cb_control_meeting(c, state)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('pause_record:'), ZoomManageStates.controlling_meeting)
@@ -1068,21 +1202,19 @@ async def cb_pause_record(c: CallbackQuery, state: FSMContext):
     # Get meeting data from FSM state
     data = await state.get_data()
     topic = data.get('topic', 'Unknown Meeting')
-    agent_name = data.get('agent_name', 'Unknown Agent')
+    agent_id = data.get('agent_id')
     
     # Check if recording is active
     if current_status == 'stopped':
         text = (
             f"🎥 <b>Meeting Control</b>\n\n"
-            f"Meeting: <b>{topic}</b>\n"
-            f"Agent: <b>{agent_name}</b>\n\n"
+            f"Meeting: <b>{topic}</b>\n\n"
             "⚠️ Rekaman belum aktif. Gunakan Start/Stop Recording terlebih dahulu."
         )
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
-            [InlineKeyboardButton(text="⏺️ Start Recording", callback_data=f"toggle_record:{meeting_id}"), 
-             InlineKeyboardButton(text="⏸️ Pause/Resume Recording", callback_data=f"pause_record:{meeting_id}")],
+            [InlineKeyboardButton(text="⏺️ Start Recording", callback_data=f"toggle_record:{meeting_id}")],
             [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
         ])
         
@@ -1094,33 +1226,27 @@ async def cb_pause_record(c: CallbackQuery, state: FSMContext):
     if current_status == 'recording':
         new_status = 'paused'
         status_text = "⏸️ Recording paused"
-        instruction = "Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk pause."
-        button_text = "▶️ Resume Recording"
+        action = "pause-record"
     else:  # paused
         new_status = 'recording'
         status_text = "▶️ Recording resumed"
-        instruction = "Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk resume."
-        button_text = "⏸️ Pause Recording"
+        action = "resume-record"
+    
+    # Send hotkey command to agent if agent_id is available
+    if agent_id:
+        try:
+            payload = json.dumps({})  # Empty payload since action is now in the action field
+            await add_command(agent_id, action, payload)
+            logger.info("Sent %s command to agent %s for meeting %s", action, agent_id, meeting_id)
+        except Exception as e:
+            logger.error("Failed to send command to agent %s: %s", agent_id, e)
+            # Continue with database update even if command fails
     
     # Update database
     await update_meeting_recording_status(meeting_id, new_status)
     
-    text = (
-        f"🎥 <b>Meeting Control</b>\n\n"
-        f"Meeting: <b>{topic}</b>\n"
-        f"Agent: <b>{agent_name}</b>\n\n"
-        f"{status_text}\n{instruction}"
-    )
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
-        [InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"toggle_record:{meeting_id}"), 
-         InlineKeyboardButton(text=button_text, callback_data=f"pause_record:{meeting_id}")],
-        [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
-    ])
-    
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
-    await c.answer()
+    # Refresh the control interface
+    await cb_control_meeting(c, state)
 
 
 

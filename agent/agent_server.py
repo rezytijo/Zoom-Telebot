@@ -8,7 +8,19 @@ Usage:
 The agent exposes a simple HTTP API (POST /command) secured by header
 Authorization: Bearer <API_KEY>. Supported actions:
  - open_url: {"url": "https://..."} -> opens the URL in the default browser (which may trigger Zoom client)
- - hotkey: {"keys": ["alt","q"]} -> sends a hotkey combination using pyautogui
+ - start_zoom: {"payload": {"action": "...", "url": "...", ...}} -> opens Zoom meeting URL
+ - start-record: {} -> sends Alt+R to start recording in Zoom
+ - stop-record: {} -> sends Alt+R to stop recording in Zoom  
+ - pause-record: {} -> sends Alt+P to pause recording in Zoom
+ - resume-record: {} -> sends Alt+P to resume recording in Zoom
+ - hotkey: {"keys": ["alt","q"]} -> sends a hotkey combination using pyautogui (legacy support)
+
+When running in polling mode (--server-url), the agent automatically registers with the server
+and provides detailed system information (name will be assigned by admin later):
+ - os_type: Detailed OS name and version (e.g., "Windows 11 Pro (Version 10.0.22621)")
+ - hostname: System hostname
+ - ip_address: Primary IP address of the host
+ - version: Agent version (e.g., "1.0.0")
 
 Security: Use a strong API key and run agent behind firewall / only on trusted hosts.
 
@@ -21,6 +33,7 @@ import json
 import logging
 import os
 import platform
+import socket
 import webbrowser
 from aiohttp import web
 
@@ -30,6 +43,83 @@ try:
     import pyautogui
 except Exception:
     pyautogui = None
+
+
+def get_system_info():
+    """Get detailed system information for agent registration."""
+    # OS Type and Version
+    system = platform.system()
+    if system == 'Windows':
+        try:
+            import subprocess
+            result = subprocess.run(['wmic', 'os', 'get', 'Caption,Version', '/value'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                caption = ""
+                version = ""
+                for line in lines:
+                    if line.startswith('Caption='):
+                        caption = line.split('=', 1)[1]
+                    elif line.startswith('Version='):
+                        version = line.split('=', 1)[1]
+                os_type = f"{caption} (Version {version})" if caption else f"Windows {version}"
+            else:
+                os_type = f"Windows {platform.release()}"
+        except Exception:
+            os_type = f"Windows {platform.release()}"
+    elif system == 'Linux':
+        try:
+            # Try to get distribution info
+            import subprocess
+            result = subprocess.run(['lsb_release', '-d', '-s'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                os_type = result.stdout.strip()
+            else:
+                # Fallback to /etc/os-release
+                try:
+                    with open('/etc/os-release', 'r') as f:
+                        for line in f:
+                            if line.startswith('PRETTY_NAME='):
+                                os_type = line.split('=', 1)[1].strip().strip('"')
+                                break
+                        else:
+                            os_type = f"Linux {platform.release()}"
+                except Exception:
+                    os_type = f"Linux {platform.release()}"
+        except Exception:
+            os_type = f"Linux {platform.release()}"
+    else:
+        os_type = f"{system} {platform.release()}"
+
+    # Hostname
+    hostname = platform.node()
+    
+    # IP Address (get the primary IP)
+    ip_address = "127.0.0.1"  # fallback
+    try:
+        # Get IP address by connecting to a public DNS server
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip_address = s.getsockname()[0]
+        s.close()
+    except Exception:
+        try:
+            # Fallback: get hostname IP
+            ip_address = socket.gethostbyname(hostname)
+        except Exception:
+            pass
+    
+    # Agent Version (hardcoded for now, can be made dynamic later)
+    agent_version = "1.0.0"
+    
+    return {
+        'os_type': os_type,
+        'hostname': hostname,
+        'ip_address': ip_address,
+        'version': agent_version
+    }
 
 
 async def handle_command(request: web.Request):
@@ -92,17 +182,61 @@ async def handle_command(request: web.Request):
             logger.exception('Failed to execute %s', payload_action)
             return web.json_response({'error': str(e)}, status=500)
 
-    if action == 'hotkey':
-        keys = data.get('keys')
-        if not keys or not isinstance(keys, list):
-            return web.json_response({'error': 'missing keys array'}, status=400)
+    # Handle recording actions directly
+    recording_actions = ['start-record', 'stop-record', 'pause-record', 'resume-record']
+    if action in recording_actions:
+        # Map recording actions to hotkeys
+        action_to_keys = {
+            'start-record': ['alt', 'r'],
+            'stop-record': ['alt', 'r'],
+            'pause-record': ['alt', 'p'],
+            'resume-record': ['alt', 'p']
+        }
+        keys = action_to_keys.get(action)
+        if not keys:
+            return web.json_response({'error': f'unknown recording action: {action}'}, status=400)
+            
         if pyautogui is None:
             return web.json_response({'error': 'pyautogui not installed on agent'}, status=500)
         try:
             # pyautogui.hotkey takes key names as strings
-            logger.info('Sending hotkey: %s', keys)
+            logger.info('Sending hotkey for action %s: %s', action, keys)
             pyautogui.hotkey(*keys)
-            return web.json_response({'ok': True})
+            return web.json_response({'ok': True, 'action': action})
+        except Exception as e:
+            logger.exception('Failed to send hotkey for %s', action)
+            return web.json_response({'error': str(e)}, status=500)
+
+    # Legacy hotkey support (for backward compatibility)
+    if action == 'hotkey':
+        # Support both old format {"keys": ["alt", "r"]} and new format {"action": "start-record"}
+        payload_action = data.get('action')
+        keys = data.get('keys')
+        
+        if payload_action:
+            # New format: map action to keys
+            action_to_keys = {
+                'start-record': ['alt', 'r'],
+                'stop-record': ['alt', 'r'],
+                'pause-record': ['alt', 'p'],
+                'resume-record': ['alt', 'p']
+            }
+            keys = action_to_keys.get(payload_action)
+            if not keys:
+                return web.json_response({'error': f'unknown recording action: {payload_action}'}, status=400)
+        elif keys and isinstance(keys, list):
+            # Old format: direct keys array
+            pass
+        else:
+            return web.json_response({'error': 'missing keys array or action'}, status=400)
+            
+        if pyautogui is None:
+            return web.json_response({'error': 'pyautogui not installed on agent'}, status=500)
+        try:
+            # pyautogui.hotkey takes key names as strings
+            logger.info('Sending hotkey for action %s: %s', payload_action or 'legacy', keys)
+            pyautogui.hotkey(*keys)
+            return web.json_response({'ok': True, 'action': payload_action})
         except Exception as e:
             logger.exception('Failed to send hotkey')
             return web.json_response({'error': str(e)}, status=500)
@@ -111,7 +245,15 @@ async def handle_command(request: web.Request):
 
 
 async def handle_ping(request: web.Request):
-    return web.json_response({'ok': True, 'os': platform.system()})
+    system_info = get_system_info()
+    return web.json_response({
+        'ok': True,
+        'os': platform.system(),
+        'os_type': system_info['os_type'],
+        'hostname': system_info['hostname'],
+        'ip_address': system_info['ip_address'],
+        'version': system_info['version']
+    })
 
 
 def create_app(api_key: str):
@@ -145,9 +287,14 @@ def main():
         # start background polling loop
         async def poll_loop():
             import aiohttp
+            # Get detailed system information
+            system_info = get_system_info()
             agent_info = {
-                'name': os.getenv('AGENT_NAME', 'agent'),
-                'os_type': os.getenv('AGENT_OS', platform.system()),
+                # 'name' is now optional - will be set by admin when adding agent
+                'os_type': system_info['os_type'],
+                'hostname': system_info['hostname'],
+                'ip_address': system_info['ip_address'],
+                'version': system_info['version'],
                 'api_key': args.api_key,
                 'base_url': f'http://{args.host}:{args.port}'
             }
