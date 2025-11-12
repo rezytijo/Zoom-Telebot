@@ -30,6 +30,7 @@ CREATE_SQL = [
         start_time TEXT,
         join_url TEXT,
         status TEXT DEFAULT 'active', -- active, deleted, expired
+        recording_status TEXT DEFAULT 'stopped', -- stopped, recording, paused
         created_by TEXT, -- INTEGER (telegram_id) for bot-created, "CreatedFromZoomApp" for zoom-created
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -56,7 +57,10 @@ CREATE_SQL = [
         base_url TEXT NOT NULL,
         api_key TEXT,
         os_type TEXT,
-        last_seen TIMESTAMP
+        last_seen TIMESTAMP,
+        hostname TEXT,
+        ip_address TEXT,
+        version TEXT DEFAULT 'v1.0'
     )
     """,
     """
@@ -206,9 +210,9 @@ async def update_meeting_short_url_by_join_url(join_url: str, short_url: str):
 async def list_meetings() -> List[Dict]:
     logger.debug("list_meetings called")
     async with aiosqlite.connect(settings.db_path) as db:
-        cur = await db.execute("SELECT id, zoom_meeting_id, topic, start_time, join_url, status, created_by, created_at, updated_at FROM meetings ORDER BY created_at DESC")
+        cur = await db.execute("SELECT id, zoom_meeting_id, topic, start_time, join_url, status, recording_status, created_by, created_at, updated_at FROM meetings ORDER BY created_at DESC")
         rows = await cur.fetchall()
-        return [dict(id=r[0], zoom_meeting_id=r[1], topic=r[2], start_time=r[3], join_url=r[4], status=r[5], created_by=r[6], created_at=r[7], updated_at=r[8]) for r in rows]
+        return [dict(id=r[0], zoom_meeting_id=r[1], topic=r[2], start_time=r[3], join_url=r[4], status=r[5], recording_status=r[6], created_by=r[7], created_at=r[8], updated_at=r[9]) for r in rows]
 
 
 async def list_meetings_with_shortlinks() -> List[Dict]:
@@ -217,7 +221,7 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
     async with aiosqlite.connect(settings.db_path) as db:
         # Get meetings
         meetings_cur = await db.execute("""
-            SELECT id, zoom_meeting_id, topic, start_time, join_url, status, created_by, created_at, updated_at
+            SELECT id, zoom_meeting_id, topic, start_time, join_url, status, recording_status, created_by, created_at, updated_at
             FROM meetings
             WHERE status = 'active'
             ORDER BY created_at DESC
@@ -233,9 +237,10 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
                 start_time=r[3],
                 join_url=r[4],
                 status=r[5],
-                created_by=r[6],
-                created_at=r[7],
-                updated_at=r[8]
+                recording_status=r[6],
+                created_by=r[7],
+                created_at=r[8],
+                updated_at=r[9]
             )
             
             # Get shortlinks for this meeting
@@ -267,10 +272,18 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
 
 async def add_agent(name: str, base_url: str, api_key: str | None = None, os_type: str | None = None):
     logger.debug("add_agent name=%s base_url=%s os_type=%s", name, base_url, os_type)
+    # Parse hostname and ip from base_url
+    hostname = None
+    ip_address = None
+    if base_url:
+        from urllib.parse import urlparse
+        parsed = urlparse(base_url)
+        hostname = parsed.hostname
+        ip_address = parsed.hostname  # Assuming hostname is IP or resolvable
     async with aiosqlite.connect(settings.db_path) as db:
         cur = await db.execute(
-            "INSERT INTO agents (name, base_url, api_key, os_type, last_seen) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-            (name, base_url, api_key, os_type)
+            "INSERT INTO agents (name, base_url, api_key, os_type, last_seen, hostname, ip_address, version) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, 'v1.0')",
+            (name, base_url, api_key, os_type, hostname, ip_address)
         )
         await db.commit()
         agent_id = cur.lastrowid
@@ -303,22 +316,60 @@ async def update_command_status(command_id: int, status: str, result: str | None
         await db.commit()
 
 
-async def list_agents() -> List[Dict]:
-    logger.debug("list_agents called")
+async def check_timeout_commands():
+    """Check for commands that have timed out (60 seconds) and mark them as failed."""
+    timeout_seconds = 60
     async with aiosqlite.connect(settings.db_path) as db:
-        cur = await db.execute("SELECT id, name, base_url, api_key, os_type, last_seen FROM agents ORDER BY id DESC")
+        # Update commands that are still pending/running and older than timeout
+        await db.execute("""
+            UPDATE agent_commands 
+            SET status = 'failed', 
+                result = 'Command timed out after 60 seconds', 
+                updated_at = CURRENT_TIMESTAMP 
+            WHERE status IN ('pending', 'running') 
+            AND (strftime('%s', 'now') - strftime('%s', created_at)) > ?
+        """, (timeout_seconds,))
+        await db.commit()
+        
+        # Return count of timed out commands
+        cur = await db.execute("""
+            SELECT COUNT(*) FROM agent_commands 
+            WHERE status = 'failed' 
+            AND result = 'Command timed out after 60 seconds'
+            AND (strftime('%s', 'now') - strftime('%s', updated_at)) < 10
+        """)
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
+
+async def list_agents(limit: Optional[int] = None, offset: int = 0) -> List[Dict]:
+    logger.debug("list_agents called with limit=%s offset=%s", limit, offset)
+    query = "SELECT id, name, base_url, api_key, os_type, last_seen, hostname, ip_address, version FROM agents ORDER BY id ASC"
+    params = ()
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params = (limit, offset)
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute(query, params)
         rows = await cur.fetchall()
-        return [dict(id=r[0], name=r[1], base_url=r[2], api_key=r[3], os_type=r[4], last_seen=r[5]) for r in rows]
+        return [dict(id=r[0], name=r[1], base_url=r[2], api_key=r[3], os_type=r[4], last_seen=r[5], hostname=r[6], ip_address=r[7], version=r[8]) for r in rows]
+
+
+async def count_agents() -> int:
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM agents")
+        row = await cur.fetchone()
+        return row[0] if row else 0
 
 
 async def get_agent(agent_id: int) -> Optional[Dict]:
     logger.debug("get_agent %s", agent_id)
     async with aiosqlite.connect(settings.db_path) as db:
-        cur = await db.execute("SELECT id, name, base_url, api_key, os_type, last_seen FROM agents WHERE id = ?", (agent_id,))
+        cur = await db.execute("SELECT id, name, base_url, api_key, os_type, last_seen, hostname, ip_address, version FROM agents WHERE id = ?", (agent_id,))
         r = await cur.fetchone()
         if not r:
             return None
-        return dict(id=r[0], name=r[1], base_url=r[2], api_key=r[3], os_type=r[4], last_seen=r[5])
+        return dict(id=r[0], name=r[1], base_url=r[2], api_key=r[3], os_type=r[4], last_seen=r[5], hostname=r[6], ip_address=r[7], version=r[8])
 
 
 async def remove_agent(agent_id: int):
@@ -368,6 +419,24 @@ async def update_meeting_details(zoom_meeting_id: str, topic: str | None = None,
             )
         await db.commit()
     logger.info("Meeting %s details updated", zoom_meeting_id)
+
+
+async def update_meeting_recording_status(zoom_meeting_id: str, recording_status: str):
+    """Update meeting recording status (stopped, recording, paused)"""
+    logger.debug("update_meeting_recording_status zoom_id=%s recording_status=%s", zoom_meeting_id, recording_status)
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute("UPDATE meetings SET recording_status = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?", (recording_status, zoom_meeting_id))
+        await db.commit()
+    logger.info("Meeting %s recording status updated to %s", zoom_meeting_id, recording_status)
+
+
+async def get_meeting_recording_status(zoom_meeting_id: str) -> Optional[str]:
+    """Get meeting recording status (stopped, recording, paused)"""
+    logger.debug("get_meeting_recording_status zoom_id=%s", zoom_meeting_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute("SELECT recording_status FROM meetings WHERE zoom_meeting_id = ?", (zoom_meeting_id,))
+        row = await cur.fetchone()
+        return row[0] if row else None
 
 
 async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
@@ -583,6 +652,10 @@ async def run_migrations(db):
             logger.info("Adding status column to meetings table")
             await db.execute("ALTER TABLE meetings ADD COLUMN status TEXT DEFAULT 'active'")
         
+        if 'recording_status' not in column_names:
+            logger.info("Adding recording_status column to meetings table")
+            await db.execute("ALTER TABLE meetings ADD COLUMN recording_status TEXT DEFAULT 'stopped'")
+        
         if 'updated_at' not in column_names:
             logger.info("Adding updated_at column to meetings table")
             await db.execute("ALTER TABLE meetings ADD COLUMN updated_at TIMESTAMP")
@@ -603,6 +676,23 @@ async def run_migrations(db):
         # Update existing records to have proper created_by values
         await db.execute("UPDATE meetings SET created_by = 'CreatedFromZoomApp' WHERE created_by IS NULL OR created_by = '0'")
         await db.execute("UPDATE meetings SET status = 'active' WHERE status IS NULL")
+
+        # Check agents table for new columns
+        cur = await db.execute("PRAGMA table_info(agents)")
+        columns = await cur.fetchall()
+        column_names = [col[1] for col in columns]
+
+        if 'hostname' not in column_names:
+            logger.info("Adding hostname column to agents table")
+            await db.execute("ALTER TABLE agents ADD COLUMN hostname TEXT")
+
+        if 'ip_address' not in column_names:
+            logger.info("Adding ip_address column to agents table")
+            await db.execute("ALTER TABLE agents ADD COLUMN ip_address TEXT")
+
+        if 'version' not in column_names:
+            logger.info("Adding version column to agents table")
+            await db.execute("ALTER TABLE agents ADD COLUMN version TEXT DEFAULT 'v1.0'")
         
     except Exception as e:
         logger.exception("Migration failed: %s", e)

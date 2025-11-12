@@ -11,7 +11,7 @@ def escape_md(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
 
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, list_agents, get_agent, add_agent, remove_agent, add_command, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, list_agents, count_agents, get_agent, add_agent, remove_agent, add_command, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands
 from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
 from auth import is_allowed_to_create, is_owner_or_admin
@@ -20,6 +20,7 @@ import logging
 
 import re
 from datetime import datetime, date, time, timedelta, timezone
+from urllib.parse import urlparse
 import uuid
 from shortener import make_short
 import shlex
@@ -27,6 +28,7 @@ import os
 import shutil
 import tempfile
 import html
+import json
 
 router = Router()
 # in-memory temp mapping token -> original url (short-lived)
@@ -198,6 +200,7 @@ class ZoomManageStates(StatesGroup):
     choosing = State()
     confirm_stop = State()
     confirm_delete = State()
+    controlling_meeting = State()
 
 
 class ZoomEditStates(StatesGroup):
@@ -224,19 +227,52 @@ async def cb_manage_meeting(c: CallbackQuery):
     topic = meeting.get('topic', 'No Topic')
     join_url = meeting.get('join_url', '')
     start_time = meeting.get('start_time', '')
+    created_by = meeting.get('created_by', 'Unknown')
+    
+    # Get creator username
+    creator_username = await _get_username_from_telegram_id(created_by)
+    
+    # Format time with day name and full date
+    formatted_time = start_time
+    try:
+        if start_time:
+            # Try to parse as ISO format first
+            dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            wib_tz = timezone(timedelta(hours=7))
+            dt_wib = dt.astimezone(wib_tz)
+            
+            days_id = {
+                0: 'Senin', 1: 'Selasa', 2: 'Rabu', 3: 'Kamis',
+                4: 'Jumat', 5: 'Sabtu', 6: 'Minggu'
+            }
+            
+            months_id = {
+                1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
+                7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
+            }
+            
+            day_name = days_id[dt_wib.weekday()]
+            day = dt_wib.day
+            month_name = months_id[dt_wib.month]
+            year = dt_wib.year
+            time_str = dt_wib.strftime("%H:%M")
+            
+            formatted_time = f"{day_name}, {day} {month_name} {year} pada pukul {time_str}"
+    except Exception:
+        pass  # Keep original start_time if parsing fails
 
     text = (
-        f"⚙️ Manage Meeting\n\n" 
-        f"Topik: <b>{topic}</b>\n"
-        f"Meeting ID: <code>{meeting_id}</code>\n"
-        f"Waktu Mulai: {start_time}\n"
-        f"Link: {join_url}\n\n"
+        f"⚙️ Manage Meeting <b>{topic}</b>\n\n"
+        f"🆔 <b>Meeting ID:</b> <code>{meeting_id}</code>\n"
+        f"👤 <b>Creator:</b> {creator_username}\n"
+        f"🕛 <b>Waktu:</b> {formatted_time}\n"
+        f"🔗 <b>Zoom Link:</b> {join_url}\n\n"
         "Pilih tindakan di bawah ini:"
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Start Meeting (Open Zoom)", callback_data=f"start_meeting:{meeting_id}"), InlineKeyboardButton(text="▶️ Start on Agent", callback_data=f"start_on_agent:{meeting_id}")],
-        [InlineKeyboardButton(text="🛑 Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
+        [InlineKeyboardButton(text="▶️ Start Meeting on Agent", callback_data=f"start_on_agent:{meeting_id}")],
+        [InlineKeyboardButton(text="🗑️ Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
         [InlineKeyboardButton(text="✏️ Edit Meeting", callback_data=f"edit_meeting:{meeting_id}" )],
         [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
     ])
@@ -265,7 +301,7 @@ async def cb_start_on_agent(c: CallbackQuery):
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('agent_start:'))
-async def cb_agent_start(c: CallbackQuery):
+async def cb_agent_start(c: CallbackQuery, state: FSMContext):
     # callback data: agent_start:<meeting_id>:<agent_id>
     parts = c.data.split(':')
     if len(parts) < 3:
@@ -295,8 +331,48 @@ async def cb_agent_start(c: CallbackQuery):
 
     # queue command for agent to pick up via polling
     try:
-        cid = await add_command(agent_id, 'open_url', join_url)
-        await _safe_edit_or_fallback(c, f"✅ Perintah telah masuk antrian untuk agent <b>{agent['name']}</b>. Command ID: {cid}", parse_mode='HTML')
+        # Create JSON payload for start_zoom action
+        payload_data = {
+            "action": "start_zoom",
+            "url": join_url,
+            "meeting_id": meeting_id,
+            "topic": meeting.get('topic', 'Unknown Meeting'),
+            "timeout": 60  # 60 seconds timeout
+        }
+        payload_json = json.dumps(payload_data)
+        
+        cid = await add_command(agent_id, 'start_zoom', payload_json)
+        
+        # Store meeting info in FSM state
+        await state.update_data(
+            meeting_id=meeting_id,
+            agent_id=agent_id,
+            agent_name=agent['name'],
+            command_id=cid,
+            topic=meeting.get('topic', 'Unknown Meeting')
+        )
+        
+        # Transition to controlling meeting state
+        await state.set_state(ZoomManageStates.controlling_meeting)
+        
+        # Show meeting control interface
+        text = (
+            f"🎥 <b>Meeting Control</b>\n\n"
+            f"Meeting: <b>{meeting.get('topic', 'Unknown Meeting')}</b>\n"
+            f"Agent: <b>{agent['name']}</b>\n"
+            f"Command ID: {cid}\n\n"
+            "Meeting telah diantrikan untuk dibuka di agent. Gunakan kontrol di bawah ini:"
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
+            [InlineKeyboardButton(text="⏺️ Start/Stop Recording", callback_data=f"toggle_record:{meeting_id}"), 
+             InlineKeyboardButton(text="⏸️ Pause/Resume Recording", callback_data=f"pause_record:{meeting_id}")],
+            [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
+        ])
+        
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        
     except Exception as e:
         logger.exception("Failed to queue command for agent %s: %s", agent_id, e)
         await _safe_edit_or_fallback(c, f"❌ Gagal mengantri perintah untuk agent: {e}")
@@ -342,53 +418,181 @@ async def cmd_add_agent(msg: Message):
             local_ip = '127.0.0.1'
 
     server_url = f"http://{local_ip}:{settings.AGENT_API_PORT}"
-    # agent local listening base_url (if agent should accept direct commands)
-    agent_base_url = settings.AGENT_BASE_URL or f"http://{local_ip}:{settings.AGENT_DEFAULT_PORT}"
 
     try:
-        agent_id = await add_agent(name, agent_base_url, api_key, os_type)
+        agent_id = await add_agent(name, '', api_key, os_type)
 
         # Compose user-facing instruction: polling mode is recommended
         polling_cmd = f'python agent/agent_server.py --api-key "{api_key}" --server-url "{server_url}"'
-        direct_cmd = f'python agent/agent_server.py --api-key "{api_key}" --port {settings.AGENT_DEFAULT_PORT}'
 
         resp = (
             f"✅ Agent '{name}' dibuat. ID: {agent_id}\n\n"
             f"API Key (simpan dengan aman):\n<code>{api_key}</code>\n\n"
             "Contoh perintah untuk menjalankan agen (Polling mode — direkomendasikan, agen akan register & poll ke server):\n"
             f"PowerShell:\n<code>{polling_cmd}</code>\n\n"
-            "Contoh Direct mode (server harus dapat mengakses agen):\n"
-            f"PowerShell:\n<code>{direct_cmd}</code>\n\n"
             "Catatan: ganti `server_url` di atas dengan URL publik server Anda jika diperlukan (HTTPS direkomendasikan)."
         )
 
-        await msg.reply(resp, parse_mode='HTML')
+        # Add button to show agents list
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Lihat Daftar Agent", callback_data="agents_page:1")]
+        ])
+
+        await msg.reply(resp, reply_markup=kb, parse_mode='HTML')
     except Exception as e:
         logger.exception("Failed to add agent: %s", e)
         await msg.reply(f"❌ Gagal menambahkan agent: {e}")
 
 
+
 @router.message(Command("agents"))
 async def cmd_agents(msg: Message):
-    if msg.from_user is None:
+    await show_agents_page(msg, 1)
+
+
+async def show_agents_page(source, page: int):
+    """Show agents list for a specific page."""
+    if hasattr(source, 'from_user') and source.from_user is None:
         return
-    user = await get_user_by_telegram_id(msg.from_user.id)
+    user_id = source.from_user.id if hasattr(source, 'from_user') else source.from_user.id
+    user = await get_user_by_telegram_id(user_id)
     if not is_allowed_to_create(user):
-        await msg.reply("Anda tidak memiliki izin melihat agents.")
+        reply = "Anda tidak memiliki izin melihat agents."
+        if hasattr(source, 'reply'):
+            await source.reply(reply)
+        else:
+            await _safe_edit_or_fallback(source, reply)
         return
-    agents = await list_agents()
-    if not agents:
-        await msg.reply("Belum ada agent terdaftar. Tambah dengan /add_agent <name> <base_url> <api_key>")
+
+    limit = 5
+    offset = (page - 1) * limit
+    agents = await list_agents(limit=limit, offset=offset)
+    total_agents = await count_agents()
+
+    if total_agents == 0:
+        reply = "Belum ada agent terdaftar. Tambah dengan /add_agent <name> <base_url> <api_key>"
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data="back_to_main")]])
+        if hasattr(source, 'reply'):
+            await source.reply(reply, reply_markup=kb)
+        else:
+            await _safe_edit_or_fallback(source, reply, reply_markup=kb)
         return
-    text = "📡 <b>Registered Agents</b>\n\n"
+
+    # Calculate totals
+    all_agents = await list_agents()  # Get all for status calculation
+    active_count = 0
+    inactive_count = 0
+    for a in all_agents:
+        last_seen = a.get('last_seen')
+        if last_seen and isinstance(last_seen, str):
+            try:
+                last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+                if last_seen_dt.tzinfo is None:
+                    last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - last_seen_dt < timedelta(minutes=10):
+                    active_count += 1
+                else:
+                    inactive_count += 1
+            except (ValueError, AttributeError):
+                inactive_count += 1
+        else:
+            inactive_count += 1
+
+    text = (
+        "🤖 Daftar Agent\n\n"
+        f"🟢 Total Agent Aktif: {active_count}\n"
+        f"🔴 Total Agent Mati: {inactive_count}\n"
+        f"📊 Total Agent: {total_agents}\n\n"
+    )
+
     kb_rows = []
     for a in agents:
-        text += f"ID: {a['id']} — {a['name']} — {a['base_url']} — OS: {a.get('os_type') or 'unknown'} — last_seen: {a.get('last_seen') or 'N/A'}\n"
-        kb_rows.append([InlineKeyboardButton(text=f"Remove {a['name']}", callback_data=f"remove_agent:{a['id']}")])
+        # Recalculate status per agent
+        last_seen = a.get('last_seen')
+        status = "🔴"
+        if last_seen and isinstance(last_seen, str):
+            try:
+                last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+                if last_seen_dt.tzinfo is None:
+                    last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - last_seen_dt < timedelta(minutes=10):
+                    status = "🟢"
+            except (ValueError, AttributeError):
+                pass
 
-    kb_rows.append([InlineKeyboardButton(text="🏠 Kembali", callback_data="back_to_main")])
+        hostname = a.get('hostname') or "N/A"
+        ip_address = a.get('ip_address') or "N/A"
+        os_type = a.get('os_type') or "Unknown"
+        version = a.get('version') or "v1.0"
+
+        text += (
+            f"{status} <b>{a['name']}</b>\n"
+            f"   ├ Hostname: {hostname}\n"
+            f"   ├ IP Address Agent: {ip_address}\n"
+            f"   ├ OS Type : {os_type}\n"
+            f"   └ Versi : {version}\n\n"
+        )
+
+        kb_rows.append([
+            InlineKeyboardButton(text=f"🔄 Reinstall {a['name']}", callback_data=f"reinstall_agent:{a['id']}"),
+            InlineKeyboardButton(text=f"🗑️ Remove {a['name']}", callback_data=f"remove_agent:{a['id']}")
+        ])
+
+    # Pagination buttons
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Previous", callback_data=f"agents_page:{page-1}"))
+    if offset + limit < total_agents:
+        nav_buttons.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"agents_page:{page+1}"))
+    nav_buttons.append(InlineKeyboardButton(text="🔄 Refresh", callback_data=f"agents_page:{page}"))
+    nav_buttons.append(InlineKeyboardButton(text="🏠 Kembali", callback_data="back_to_main"))
+
+    kb_rows.append(nav_buttons)
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await msg.reply(text, parse_mode='HTML', reply_markup=kb)
+
+    # Always use edit for callback queries (refresh), reply for new messages
+    if isinstance(source, CallbackQuery):
+        # For callback queries, directly edit the message
+        from aiogram.types import Message as AiMessage
+        if isinstance(source.message, AiMessage):
+            try:
+                await source.message.edit_text(text, reply_markup=kb, parse_mode='HTML')
+            except Exception as e:
+                # If edit fails for any reason, just answer the callback
+                logger.debug("Failed to edit message for callback %s: %s", source.data, e)
+                await source.answer("Gagal memperbarui pesan")
+        else:
+            await source.answer("Pesan tidak dapat diedit")
+    elif hasattr(source, 'reply'):
+        await source.reply(text, reply_markup=kb, parse_mode='HTML')
+    else:
+        await _safe_edit_or_fallback(source, text, reply_markup=kb, parse_mode='HTML')
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('agents_page:'))
+async def cb_agents_page(c: CallbackQuery):
+    parts = c.data.split(':')
+    if len(parts) < 2:
+        await c.answer("Data tidak valid")
+        return
+    try:
+        page = int(parts[1])
+    except ValueError:
+        await c.answer("Page tidak valid")
+        return
+    await show_agents_page(c, page)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('reinstall_agent:'))
+async def cb_reinstall_agent(c: CallbackQuery):
+    parts = c.data.split(':')
+    if len(parts) < 2:
+        await c.answer("Data tidak valid")
+        return
+    agent_id = int(parts[1])
+    # Placeholder for reinstall logic
+    await _safe_edit_or_fallback(c, f"🔄 Fitur reinstall agent {agent_id} belum diimplementasi. Agent perlu di-restart manual atau update konfigurasi.")
+    await c.answer()
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('remove_agent:'))
@@ -398,13 +602,43 @@ async def cb_remove_agent(c: CallbackQuery):
         await c.answer("Data tidak valid")
         return
     agent_id = int(parts[1])
+
+    # Get agent info for confirmation message
+    agent = await get_agent(agent_id)
+    if not agent:
+        await _safe_edit_or_fallback(c, "❌ Agent tidak ditemukan.")
+        await c.answer()
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Ya, Hapus Agent", callback_data=f"confirm_remove_agent:{agent_id}"),
+         InlineKeyboardButton(text="❌ Batal", callback_data="agents_page:1")]
+    ])
+    await _safe_edit_or_fallback(c, f"Apakah Anda yakin ingin menghapus agent <b>{agent['name']}</b>?\n\n⚠️ Tindakan ini tidak dapat dibatalkan.", reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('confirm_remove_agent:'))
+async def cb_confirm_remove_agent(c: CallbackQuery):
+    parts = c.data.split(':')
+    if len(parts) < 2:
+        await c.answer("Data tidak valid")
+        return
+    agent_id = int(parts[1])
+
     try:
+        # Get agent name before deletion for confirmation message
+        agent = await get_agent(agent_id)
+        agent_name = agent['name'] if agent else f"ID {agent_id}"
+
         await remove_agent(agent_id)
-        await _safe_edit_or_fallback(c, f"✅ Agent {agent_id} dihapus.")
+        # After successful removal, show updated agents list
+        await show_agents_page(c, 1)
+        await c.answer(f"Agent {agent_name} berhasil dihapus")
     except Exception as e:
         logger.exception("Failed to remove agent %s: %s", agent_id, e)
         await _safe_edit_or_fallback(c, f"❌ Gagal menghapus agent: {e}")
-    await c.answer()
+        await c.answer()
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('start_meeting:'))
@@ -455,21 +689,82 @@ async def cb_confirm_stop(c: CallbackQuery):
     await c.answer()
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith('stop_meeting:'))
-async def cb_stop_meeting(c: CallbackQuery):
+@router.callback_query(lambda c: c.data and c.data.startswith('stop_meeting:'), ZoomManageStates.controlling_meeting)
+async def cb_stop_meeting(c: CallbackQuery, state: FSMContext):
     meeting_id = c.data.split(':', 1)[1]
     await c.answer("Mengakhiri meeting...")
+    
+    # Get meeting data from FSM state
+    data = await state.get_data()
+    topic = data.get('topic', 'Unknown Meeting')
+    
     try:
         ok = await zoom_client.end_meeting(meeting_id)
         if ok:
             # update DB status
             await update_meeting_status(meeting_id, 'deleted')
-            await _safe_edit_or_fallback(c, f"✅ Meeting <code>{meeting_id}</code> berhasil diakhiri (server-side).", parse_mode="HTML")
+            
+            # Clear FSM state
+            await state.clear()
+            
+            text = (
+                f"✅ Meeting berhasil diakhiri (server-side).\n\n"
+                f"Meeting: <b>{topic}</b>\n"
+                f"Meeting ID: <code>{meeting_id}</code>\n\n"
+                "Meeting telah dihapus dari Zoom."
+            )
+            
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🏠 Kembali ke Daftar Meeting", callback_data="list_meetings")]
+            ])
+            
+            await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
         else:
-            await _safe_edit_or_fallback(c, f"❌ Gagal mengakhiri meeting {meeting_id} via API. Coba hapus atau cek manual.")
+            text = (
+                f"❌ Gagal mengakhiri meeting {meeting_id} via API.\n\n"
+                f"Meeting: <b>{topic}</b>\n\n"
+                "Coba hapus meeting secara manual atau cek status di Zoom."
+            )
+            
+            # Keep the control interface for retry
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🛑 Coba Lagi Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
+                [InlineKeyboardButton(text="⏺️ Start/Stop Recording", callback_data=f"toggle_record:{meeting_id}"), 
+                 InlineKeyboardButton(text="⏸️ Pause/Resume Recording", callback_data=f"pause_record:{meeting_id}")],
+                [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
+            ])
+            
+            await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+            
     except Exception as e:
         logger.exception("Failed to end meeting %s: %s", meeting_id, e)
-        await _safe_edit_or_fallback(c, f"❌ Error saat mengakhiri meeting: {e}")
+        
+        text = (
+            f"❌ Error saat mengakhiri meeting.\n\n"
+            f"Meeting: <b>{topic}</b>\n"
+            f"Error: {e}\n\n"
+            "Coba lagi atau hubungi administrator."
+        )
+        
+        # Keep the control interface for retry
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛑 Coba Lagi Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
+            [InlineKeyboardButton(text="⏺️ Start/Stop Recording", callback_data=f"toggle_record:{meeting_id}"), 
+             InlineKeyboardButton(text="⏸️ Pause/Resume Recording", callback_data=f"pause_record:{meeting_id}")],
+            [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
+        ])
+        
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('manage_meeting:'), ZoomManageStates.controlling_meeting)
+async def cb_back_to_manage_from_control(c: CallbackQuery, state: FSMContext):
+    """Handle back to manage from meeting control FSM state."""
+    # Clear the FSM state
+    await state.clear()
+    
+    # Continue with normal manage_meeting handler
+    await cb_manage_meeting(c)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('confirm_delete:'))
@@ -501,8 +796,53 @@ async def cb_delete_meeting(c: CallbackQuery):
 @router.callback_query(lambda c: c.data and c.data.startswith('edit_meeting:'))
 async def cb_edit_meeting(c: CallbackQuery, state: FSMContext):
     meeting_id = c.data.split(':', 1)[1]
-    await state.update_data(edit_meeting_id=meeting_id)
-    await _safe_edit_or_fallback(c, "✏️ Silakan kirim <b>Topik</b> baru untuk meeting ini:", parse_mode="HTML")
+    
+    # Get current meeting data and store in state
+    meetings = await list_meetings()
+    meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
+    if not meeting:
+        await _safe_edit_or_fallback(c, "Meeting tidak ditemukan")
+        return
+    
+    # Store current values in state
+    current_topic = meeting.get('topic', '')
+    current_start_time = meeting.get('start_time', '')
+    
+    # Parse current date and time
+    current_date = None
+    current_time = None
+    if current_start_time:
+        try:
+            dt = datetime.fromisoformat(current_start_time.replace('Z', '+00:00'))
+            current_date = str(dt.date())
+            current_time = dt.time()
+        except:
+            pass
+    
+    await state.update_data(
+        edit_meeting_id=meeting_id,
+        current_topic=current_topic,
+        current_date=current_date,
+        current_time=current_time,
+        # Initialize new values as None (will be set when user inputs or skips)
+        new_topic=None,
+        new_date=None,
+        new_time=None
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭️ Skip Topic", callback_data="skip_topic")]
+    ])
+
+    current_topic_display = current_topic if current_topic else "Tidak ada topik"
+    text = (
+        f"✏️ <b>Edit Meeting - Topik</b>\n\n"
+        f"📝 <b>Topik Saat Ini:</b> {current_topic_display}\n\n"
+        f"📝 <b>Topik Baru:</b>\n"
+        f"Kirimkan topik meeting yang baru, atau klik tombol di bawah untuk melewati langkah ini."
+    )
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
     await state.set_state(ZoomEditStates.waiting_for_topic)
     await c.answer()
 
@@ -513,7 +853,13 @@ async def edit_meeting_topic(msg: Message, state: FSMContext):
         await msg.reply("Silakan kirim topik meeting sebagai teks.")
         return
     await state.update_data(new_topic=msg.text.strip())
-    await msg.reply("Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", parse_mode="HTML")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭️ Skip Tanggal", callback_data="skip_date")],
+        [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
+    ])
+    
+    await msg.reply("Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", parse_mode="HTML", reply_markup=kb)
     await state.set_state(ZoomEditStates.waiting_for_date)
 
 
@@ -524,7 +870,13 @@ async def edit_meeting_date(msg: Message, state: FSMContext):
         await msg.reply("Format tanggal tidak dikenal. Gunakan DD-MM-YYYY atau '31 Desember 2025'.")
         return
     await state.update_data(new_date=str(d))
-    await msg.reply("Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", parse_mode="HTML")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭️ Skip Waktu", callback_data="skip_time")],
+        [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
+    ])
+    
+    await msg.reply("Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", parse_mode="HTML", reply_markup=kb)
     await state.set_state(ZoomEditStates.waiting_for_time)
 
 
@@ -535,10 +887,14 @@ async def edit_meeting_time(msg: Message, state: FSMContext):
         await msg.reply("Format waktu tidak valid. Gunakan HH:MM (24 jam).")
         return
 
+    # Store the new time
+    await state.update_data(new_time=t)
+
     data = await state.get_data()
     meeting_id = data.get('edit_meeting_id')
-    topic = data.get('new_topic')
-    date_str = data.get('new_date')
+    topic = data.get('new_topic') or data.get('current_topic', '')
+    date_str = data.get('new_date') or data.get('current_date')
+    
     if not (meeting_id and topic and date_str):
         await msg.reply("Data edit tidak lengkap. Mulai lagi.")
         await state.clear()
@@ -557,7 +913,11 @@ async def edit_meeting_time(msg: Message, state: FSMContext):
         resp = await zoom_client.update_meeting(meeting_id, topic=topic, start_time=start_time_iso)
         # Update local DB
         await update_meeting_details(meeting_id, topic=topic, start_time=start_time_iso)
-        await msg.reply(f"✅ Meeting diperbarui. (meeting_id={meeting_id})")
+        # Show success message with auto-return option
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📅 Kembali ke Daftar Meeting", callback_data="list_meetings")]
+        ])
+        await msg.reply(f"✅ Meeting berhasil diperbarui! (meeting_id={meeting_id})", reply_markup=kb)
     except Exception as e:
         logger.exception("Failed to update meeting %s: %s", meeting_id, e)
         await msg.reply(f"❌ Gagal memperbarui meeting: {e}")
@@ -565,40 +925,201 @@ async def edit_meeting_time(msg: Message, state: FSMContext):
     await state.clear()
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith('toggle_record:'))
-async def cb_toggle_record(c: CallbackQuery):
-    meeting_id = c.data.split(':', 1)[1]
-    state_map = globals().setdefault('MEETING_MANAGE_STATE', {})
-    st = state_map.setdefault(str(meeting_id), {'started': False, 'recording': False, 'paused': False})
-    # toggle recording flag
-    st['recording'] = not bool(st.get('recording'))
-    st['paused'] = False
-    if st['recording']:
-        text = "🔴 Recording started (local). Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk memulai perekaman lokal."
-    else:
-        text = "⏹️ Recording stopped (local). Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk menghentikan perekaman lokal."
-
-    await _safe_edit_or_fallback(c, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data=f"manage_meeting:{meeting_id}")]]))
+@router.callback_query(lambda c: c.data == 'skip_topic')
+async def cb_skip_topic(c: CallbackQuery, state: FSMContext):
+    """Skip topic editing and proceed to date editing."""
+    data = await state.get_data()
+    
+    # Use current topic if no new topic was set
+    if not data.get('new_topic'):
+        await state.update_data(new_topic=data.get('current_topic', ''))
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭️ Skip Tanggal", callback_data="skip_date")],
+        [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
+    ])
+    
+    await _safe_edit_or_fallback(c, "Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", parse_mode="HTML", reply_markup=kb)
+    await state.set_state(ZoomEditStates.waiting_for_date)
     await c.answer()
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith('pause_record:'))
-async def cb_pause_record(c: CallbackQuery):
+@router.callback_query(lambda c: c.data == 'skip_date')
+async def cb_skip_date(c: CallbackQuery, state: FSMContext):
+    """Skip date editing and proceed to time editing."""
+    data = await state.get_data()
+    
+    # Use current date if no new date was set
+    if not data.get('new_date'):
+        await state.update_data(new_date=data.get('current_date'))
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭️ Skip Waktu", callback_data="skip_time")],
+        [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
+    ])
+    
+    await _safe_edit_or_fallback(c, "Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", parse_mode="HTML", reply_markup=kb)
+    await state.set_state(ZoomEditStates.waiting_for_time)
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data == 'skip_time')
+async def cb_skip_time(c: CallbackQuery, state: FSMContext):
+    """Skip time editing and proceed to update meeting."""
+    data = await state.get_data()
+    meeting_id = data.get('edit_meeting_id')
+    topic = data.get('new_topic') or data.get('current_topic', '')
+    date_str = data.get('new_date') or data.get('current_date')
+    
+    if not (meeting_id and topic and date_str):
+        await _safe_edit_or_fallback(c, "Data edit tidak lengkap. Mulai lagi.")
+        await state.clear()
+        return
+
+    # Use current time if time was skipped, otherwise use the stored current_time
+    time_obj = data.get('current_time')
+    if not time_obj:
+        time_obj = datetime.now().time()
+    
+    # Combine date and time into ISO with WIB timezone
+    d = datetime.fromisoformat(date_str)
+    dt = datetime.combine(d.date(), time_obj)
+    tz = timezone(timedelta(hours=7))
+    dt = dt.replace(tzinfo=tz)
+    start_time_iso = dt.isoformat()
+
+    await _safe_edit_or_fallback(c, "Memperbarui meeting... Mohon tunggu.")
+    try:
+        # Call Zoom API to update
+        resp = await zoom_client.update_meeting(meeting_id, topic=topic, start_time=start_time_iso)
+        # Update local DB
+        await update_meeting_details(meeting_id, topic=topic, start_time=start_time_iso)
+        # Auto-return to meeting list
+        await cb_list_meetings(c)
+    except Exception as e:
+        logger.exception("Failed to update meeting %s: %s", meeting_id, e)
+        await _safe_edit_or_fallback(c, f"❌ Gagal memperbarui meeting: {e}")
+
+    await state.clear()
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('toggle_record:'), ZoomManageStates.controlling_meeting)
+async def cb_toggle_record(c: CallbackQuery, state: FSMContext):
     meeting_id = c.data.split(':', 1)[1]
-    state_map = globals().setdefault('MEETING_MANAGE_STATE', {})
-    st = state_map.setdefault(str(meeting_id), {'started': False, 'recording': False, 'paused': False})
-    # toggle pause flag
-    if not st.get('recording'):
-        await _safe_edit_or_fallback(c, "⚠️ Rekaman belum aktif. Gunakan Start Recording terlebih dahulu.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data=f"manage_meeting:{meeting_id}")]]))
+    
+    # Get current recording status from database
+    current_status = await get_meeting_recording_status(meeting_id)
+    if current_status is None:
+        current_status = 'stopped'
+    
+    # Toggle recording status
+    if current_status == 'stopped':
+        new_status = 'recording'
+        status_text = "🔴 Recording started (local)"
+        instruction = "Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk memulai perekaman lokal."
+        button_text = "⏹️ Stop Recording"
+    elif current_status == 'recording':
+        new_status = 'stopped'
+        status_text = "⏹️ Recording stopped (local)"
+        instruction = "Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk menghentikan perekaman lokal."
+        button_text = "⏺️ Start Recording"
+    else:  # paused
+        new_status = 'recording'
+        status_text = "▶️ Recording resumed (local)"
+        instruction = "Silakan tekan Alt+R pada mesin yang menjalankan Zoom client untuk melanjutkan perekaman lokal."
+        button_text = "⏹️ Stop Recording"
+    
+    # Update database
+    await update_meeting_recording_status(meeting_id, new_status)
+    
+    # Get meeting data from FSM state
+    data = await state.get_data()
+    topic = data.get('topic', 'Unknown Meeting')
+    agent_name = data.get('agent_name', 'Unknown Agent')
+    
+    text = (
+        f"🎥 <b>Meeting Control</b>\n\n"
+        f"Meeting: <b>{topic}</b>\n"
+        f"Agent: <b>{agent_name}</b>\n\n"
+        f"{status_text}\n{instruction}"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
+        [InlineKeyboardButton(text=button_text, callback_data=f"toggle_record:{meeting_id}"), 
+         InlineKeyboardButton(text="⏸️ Pause/Resume Recording", callback_data=f"pause_record:{meeting_id}")],
+        [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
+    ])
+    
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('pause_record:'), ZoomManageStates.controlling_meeting)
+async def cb_pause_record(c: CallbackQuery, state: FSMContext):
+    meeting_id = c.data.split(':', 1)[1]
+    
+    # Get current recording status from database
+    current_status = await get_meeting_recording_status(meeting_id)
+    if current_status is None:
+        current_status = 'stopped'
+    
+    # Get meeting data from FSM state
+    data = await state.get_data()
+    topic = data.get('topic', 'Unknown Meeting')
+    agent_name = data.get('agent_name', 'Unknown Agent')
+    
+    # Check if recording is active
+    if current_status == 'stopped':
+        text = (
+            f"🎥 <b>Meeting Control</b>\n\n"
+            f"Meeting: <b>{topic}</b>\n"
+            f"Agent: <b>{agent_name}</b>\n\n"
+            "⚠️ Rekaman belum aktif. Gunakan Start/Stop Recording terlebih dahulu."
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
+            [InlineKeyboardButton(text="⏺️ Start Recording", callback_data=f"toggle_record:{meeting_id}"), 
+             InlineKeyboardButton(text="⏸️ Pause/Resume Recording", callback_data=f"pause_record:{meeting_id}")],
+            [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
+        ])
+        
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
         await c.answer()
         return
-    st['paused'] = not bool(st.get('paused'))
-    if st['paused']:
-        text = "⏸️ Recording paused. Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk pause."
-    else:
-        text = "▶️ Recording resumed. Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk resume."
-
-    await _safe_edit_or_fallback(c, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data=f"manage_meeting:{meeting_id}")]]))
+    
+    # Toggle pause status
+    if current_status == 'recording':
+        new_status = 'paused'
+        status_text = "⏸️ Recording paused"
+        instruction = "Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk pause."
+        button_text = "▶️ Resume Recording"
+    else:  # paused
+        new_status = 'recording'
+        status_text = "▶️ Recording resumed"
+        instruction = "Silakan tekan Alt+P pada mesin yang menjalankan Zoom client untuk resume."
+        button_text = "⏸️ Pause Recording"
+    
+    # Update database
+    await update_meeting_recording_status(meeting_id, new_status)
+    
+    text = (
+        f"🎥 <b>Meeting Control</b>\n\n"
+        f"Meeting: <b>{topic}</b>\n"
+        f"Agent: <b>{agent_name}</b>\n\n"
+        f"{status_text}\n{instruction}"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛑 Stop Meeting", callback_data=f"stop_meeting:{meeting_id}")],
+        [InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"toggle_record:{meeting_id}"), 
+         InlineKeyboardButton(text=button_text, callback_data=f"pause_record:{meeting_id}")],
+        [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
+    ])
+    
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
     await c.answer()
 
 
@@ -631,6 +1152,8 @@ async def cmd_help(msg: Message):
             "<b>Perintah Admin (khusus Owner/Admin):</b>\n"
             "<code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
             "<code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
+            "<code>/add_agent &lt;name&gt;</code> - Tambahkan agent baru untuk remote control\n"
+            "<code>/agents</code> - Kelola agent (reinstall, remove, refresh status)\n"
             "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus & expired)\n"
             "<code>/check_expired</code> - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
             "<code>/backup</code> - Buat backup database dan konfigurasi shorteners\n"
@@ -645,7 +1168,8 @@ async def cmd_help(msg: Message):
     )
 
     if is_admin:
-        help_text += "🔹 <b>Manajemen User:</b> Admin dapat menyetujui, menolak, mengubah role/status, atau menghapus user\n\n"
+        help_text += "🔹 <b>Manajemen User:</b> Admin dapat menyetujui, menolak, mengubah role/status, atau menghapus user\n"
+        help_text += "🔹 <b>Manajemen Agent:</b> Admin dapat menambahkan, melihat, dan mengelola agent untuk remote control\n\n"
     else:
         help_text += "\n"
 
@@ -961,7 +1485,19 @@ async def cmd_start(msg: Message):
             "Untuk memulai, silakan klik tombol di bawah ini.\n\n"
             "Jika Anda butuh bantuan, kapan saja bisa ketik /help."
         )
-        await msg.answer(greeting_text, reply_markup=user_action_buttons(), parse_mode="HTML")
+        
+        # Get base keyboard
+        kb = user_action_buttons()
+        
+        # Add agent management button for admin/owner
+        if is_owner_or_admin(user):
+            # Convert to list to modify
+            keyboard_rows = kb.inline_keyboard.copy()
+            # Add agent button at the end
+            keyboard_rows.append([InlineKeyboardButton(text="🤖 Kelola Agent", callback_data="agents_page:1")])
+            kb = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+        
+        await msg.answer(greeting_text, reply_markup=kb, parse_mode="HTML")
     elif user and user.get('status') == 'banned':
         await msg.reply("*Anda dibanned dari menggunakan bot ini.*", parse_mode="Markdown")
     else:

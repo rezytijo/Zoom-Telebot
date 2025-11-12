@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from urllib.parse import urlparse
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -28,6 +29,21 @@ async def background_sync_meetings():
         await asyncio.sleep(30 * 60)  # 30 minutes
 
 
+async def background_check_timeouts():
+    """Background task to check for timed out agent commands every 30 seconds."""
+    while True:
+        try:
+            from db import check_timeout_commands
+            timed_out_count = await check_timeout_commands()
+            if timed_out_count > 0:
+                logger.info("Marked %d commands as failed due to timeout", timed_out_count)
+        except Exception as e:
+            logger.exception("Error in background timeout check: %s", e)
+        
+        # Check every 30 seconds
+        await asyncio.sleep(30)
+
+
 async def on_startup(bot: Bot):
     logger.info("Bot starting...")
     
@@ -42,14 +58,28 @@ async def on_startup(bot: Bot):
     # Start background sync task
     asyncio.create_task(background_sync_meetings())
     logger.info("Background meeting sync task started")
+    
+    # Start background timeout check task
+    asyncio.create_task(background_check_timeouts())
+    logger.info("Background timeout check task started")
     # Start agent API server (for agents to poll commands)
     try:
-        from agent.agent_api import create_app
+        from api.agent_api import create_app
+        from aiohttp import web
         from config import settings
         app = create_app()
-        # run aiohttp app in background
-        asyncio.create_task(asyncio.to_thread(lambda: __import__('aiohttp').web.run_app(app, host='0.0.0.0', port=settings.AGENT_API_PORT)))
-        logger.info("Agent API server started on port %s", settings.AGENT_API_PORT)
+        # Determine host from AGENT_BASE_URL if set, else default to 0.0.0.0
+        host = '0.0.0.0'
+        if settings.AGENT_BASE_URL:
+            parsed = urlparse(settings.AGENT_BASE_URL)
+            if parsed.hostname:
+                host = parsed.hostname
+        # Use AppRunner for cleaner startup without "Running on" message
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, settings.AGENT_API_PORT)
+        await site.start()
+        print(f"======== Agent API server running on http://{host}:{settings.AGENT_API_PORT} ========")
     except Exception as e:
         logger.exception("Failed to start agent API server: %s", e)
 
@@ -71,11 +101,11 @@ async def main():
 
     await init_db()
     # configure logging early
-    logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO), format=settings.LOG_FORMAT)
+    logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO), format=settings.LOG_FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
     # Add file handler for logging to file with dynamic name
     log_filename = f"./logs/{datetime.now().strftime('%d-%b-%Y')}-{settings.LOG_LEVEL.upper()}.log"
     file_handler = logging.FileHandler(log_filename)
-    file_handler.setFormatter(logging.Formatter(settings.LOG_FORMAT))
+    file_handler.setFormatter(logging.Formatter(settings.LOG_FORMAT, datefmt='%Y-%m-%d %H:%M:%S'))
     logging.getLogger().addHandler(file_handler)
     logger.info("Initializing bot")
 

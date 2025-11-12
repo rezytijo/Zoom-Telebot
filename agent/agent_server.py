@@ -59,6 +59,39 @@ async def handle_command(request: web.Request):
             logger.exception('Failed to open URL')
             return web.json_response({'error': str(e)}, status=500)
 
+    if action == 'start_zoom':
+        # Payload is JSON with action, url, meeting_id, topic, timeout
+        payload = data.get('payload', {})
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                return web.json_response({'error': 'invalid payload json'}, status=400)
+        
+        # Get action from payload for identification
+        payload_action = payload.get('action', 'unknown')
+        url = payload.get('url')
+        meeting_id = payload.get('meeting_id')
+        topic = payload.get('topic', 'Unknown Meeting')
+        timeout = payload.get('timeout', 60)
+        
+        if not url:
+            return web.json_response({'error': 'missing url in payload'}, status=400)
+        
+        logger.info('Executing %s: %s (ID: %s, Topic: %s)', payload_action, url, meeting_id, topic)
+        try:
+            webbrowser.open(url)
+            return web.json_response({
+                'ok': True,
+                'meeting_id': meeting_id,
+                'topic': topic,
+                'action': payload_action,
+                'executed_at': 'now'
+            })
+        except Exception as e:
+            logger.exception('Failed to execute %s', payload_action)
+            return web.json_response({'error': str(e)}, status=500)
+
     if action == 'hotkey':
         keys = data.get('keys')
         if not keys or not isinstance(keys, list):
@@ -168,6 +201,14 @@ def main():
                                     logger.info('Executing command id=%s action=%s payload=%s', cid, action, payload)
                                     # execute
                                     try:
+                                        # Update status to running before execution
+                                        try:
+                                            running_payload = {'agent_id': agent_id_env, 'command_id': cid, 'status': 'running', 'result': {'message': 'Command execution started'}}
+                                            async with session.post(f"{args.server_url.rstrip('/')}/agent/report", json=running_payload, headers=headers, timeout=5) as rep:
+                                                logger.debug('Running status report for command %s: %s', cid, rep.status)
+                                        except Exception:
+                                            logger.exception('Failed to update command %s to running status', cid)
+                                        
                                         if action == 'open_url':
                                             # payload may be a plain URL string, or a JSON string like '{"url":"..."}'
                                             url = None
@@ -189,6 +230,40 @@ def main():
                                             webbrowser.open(url)
                                             result = {'ok': True}
                                             status = 'done'
+                                        
+                                        elif action == 'start_zoom':
+                                            # payload is JSON string with action, url, meeting_id, topic, timeout
+                                            if isinstance(payload, str):
+                                                try:
+                                                    payload_data = json.loads(payload)
+                                                except Exception:
+                                                    raise ValueError('invalid json payload')
+                                            elif isinstance(payload, dict):
+                                                payload_data = payload
+                                            else:
+                                                raise ValueError('invalid payload format')
+                                            
+                                            # Get action from payload for identification
+                                            payload_action = payload_data.get('action', 'unknown')
+                                            url = payload_data.get('url')
+                                            meeting_id = payload_data.get('meeting_id')
+                                            topic = payload_data.get('topic', 'Unknown Meeting')
+                                            timeout = payload_data.get('timeout', 60)
+                                            
+                                            if not url:
+                                                raise ValueError('missing url in payload')
+                                            
+                                            logger.info('Executing %s: %s (ID: %s, Topic: %s)', payload_action, url, meeting_id, topic)
+                                            webbrowser.open(url)
+                                            result = {
+                                                'ok': True,
+                                                'meeting_id': meeting_id,
+                                                'topic': topic,
+                                                'action': payload_action,
+                                                'executed_at': 'now'
+                                            }
+                                            status = 'done'
+                                        
                                         elif action == 'hotkey':
                                             if pyautogui is None:
                                                 raise RuntimeError('pyautogui not installed')

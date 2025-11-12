@@ -97,6 +97,13 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
     ```
     Untuk bantuan perintah lain, jalankan `python dev.py help`.
 
+5.  **Jalankan API Server Saja (Opsional)**
+    Jika Anda hanya ingin menjalankan API server untuk agent tanpa bot Telegram:
+    ```bash
+    python api_server.py
+    ```
+    API server akan berjalan di `http://localhost:8767` (atau sesuai konfigurasi `AGENT_API_PORT`).
+
 ## ⚙️ Konfigurasi
 
 Semua konfigurasi diatur melalui file `.env`.
