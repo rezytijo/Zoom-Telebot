@@ -3,14 +3,29 @@
 Lightweight Agent server to run on host (Windows/Linux).
 
 Usage:
-  python agent_server.py --port 8766 --api-key YOUR_KEY
+  python agent_server.py --api-key YOUR_KEY
+
+Configuration:
+  The agent automatically saves its configuration to 'agent_config.json' on first run.
+  Subsequent runs will load the saved configuration, so you only need to specify
+  parameters when you want to change them.
+
+  Options:
+    --config FILE        Configuration file path (default: agent_config.json)
+    --reset-config       Reset configuration to defaults and exit
+    --port PORT          Port to listen on (default: 8767)
+    --api-key KEY        API key for authentication (required)
+    --host HOST          Host to bind to (default: 0.0.0.0)
+    --verbose            Enable verbose (DEBUG) logging to console
+    --log-file FILE      Optional path to write logs to a file
+    --server-url URL     Optional central server URL for polling mode
 
 The agent exposes a simple HTTP API (POST /command) secured by header
 Authorization: Bearer <API_KEY>. Supported actions:
  - open_url: {"url": "https://..."} -> opens the URL in the default browser (which may trigger Zoom client)
  - start_zoom: {"payload": {"action": "...", "url": "...", ...}} -> opens Zoom meeting URL
  - start-record: {} -> sends Alt+R to start recording in Zoom
- - stop-record: {} -> sends Alt+R to stop recording in Zoom  
+ - stop-record: {} -> sends Alt+R to stop recording in Zoom
  - pause-record: {} -> sends Alt+P to pause recording in Zoom
  - resume-record: {} -> sends Alt+P to resume recording in Zoom
  - hotkey: {"keys": ["alt","q"]} -> sends a hotkey combination using pyautogui (legacy support)
@@ -34,6 +49,7 @@ import logging
 import os
 import platform
 import socket
+import sys
 import webbrowser
 from aiohttp import web
 
@@ -119,6 +135,43 @@ def get_system_info():
         'hostname': hostname,
         'ip_address': ip_address,
         'version': agent_version
+    }
+
+
+def load_config(config_file: str = 'agent_config.json') -> dict:
+    """Load configuration from JSON file."""
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                logger.info('Loaded configuration from %s', config_file)
+                return config
+        except Exception as e:
+            logger.warning('Failed to load config from %s: %s', config_file, e)
+    return {}
+
+
+def save_config(config: dict, config_file: str = 'agent_config.json') -> bool:
+    """Save configuration to JSON file."""
+    try:
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        logger.info('Saved configuration to %s', config_file)
+        return True
+    except Exception as e:
+        logger.error('Failed to save config to %s: %s', config_file, e)
+        return False
+
+
+def create_default_config() -> dict:
+    """Create default configuration."""
+    return {
+        'port': 8767,
+        'host': '0.0.0.0',
+        'api_key': None,  # Must be provided
+        'verbose': False,
+        'log_file': None,
+        'server_url': None
     }
 
 
@@ -264,15 +317,53 @@ def create_app(api_key: str):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--port', type=int, default=8767)
-    parser.add_argument('--api-key', type=str, required=True)
-    parser.add_argument('--host', type=str, default='0.0.0.0')
-    parser.add_argument('--verbose', action='store_true', help='Enable verbose (DEBUG) logging to console')
-    parser.add_argument('--log-file', type=str, default=None, help='Optional path to write logs to a file')
-    parser.add_argument('--server-url', type=str, default=None, help='Optional central server URL for polling mode')
+    # Load existing configuration
+    config_file = 'agent_config.json'
+    saved_config = load_config(config_file)
+    default_config = create_default_config()
+    
+    # Merge saved config with defaults
+    config = {**default_config, **saved_config}
+    
+    parser = argparse.ArgumentParser(description='Zoom Agent Server - Lightweight agent for Zoom automation')
+    
+    # Add config file option
+    parser.add_argument('--config', type=str, default=config_file, 
+                       help=f'Configuration file path (default: {config_file})')
+    parser.add_argument('--reset-config', action='store_true', 
+                       help='Reset configuration to defaults and exit')
+    
+    # Agent configuration arguments
+    parser.add_argument('--port', type=int, default=config.get('port', 8767),
+                       help=f'Port to listen on (default: {config.get("port", 8767)})')
+    parser.add_argument('--api-key', type=str, default=config.get('api_key'),
+                       help='API key for authentication (required)')
+    parser.add_argument('--host', type=str, default=config.get('host', '0.0.0.0'),
+                       help=f'Host to bind to (default: {config.get("host", "0.0.0.0")})')
+    parser.add_argument('--verbose', action='store_true', default=config.get('verbose', False),
+                       help='Enable verbose (DEBUG) logging to console')
+    parser.add_argument('--log-file', type=str, default=config.get('log_file'),
+                       help='Optional path to write logs to a file')
+    parser.add_argument('--server-url', type=str, default=config.get('server_url'),
+                       help='Optional central server URL for polling mode')
+    
     args = parser.parse_args()
-
+    
+    # Handle reset config option
+    if args.reset_config:
+        if os.path.exists(config_file):
+            os.remove(config_file)
+            print(f"Configuration reset. Deleted {config_file}")
+        else:
+            print(f"No configuration file found at {config_file}")
+        sys.exit(0)
+    
+    # Validate required arguments
+    if not args.api_key:
+        print("Error: --api-key is required. Use --api-key to specify the API key.")
+        print("Example: python agent_server.py --api-key YOUR_API_KEY")
+        sys.exit(1)
+    
     # Configure logging: console + optional file
     log_level = logging.DEBUG if args.verbose else logging.INFO
     handlers = [logging.StreamHandler()]
@@ -281,6 +372,22 @@ def main():
         fh = logging.FileHandler(args.log_file)
         fh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
         logging.getLogger().addHandler(fh)
+
+    # Save configuration if different from saved config or first run
+    current_config = {
+        'port': args.port,
+        'host': args.host,
+        'api_key': args.api_key,
+        'verbose': args.verbose,
+        'log_file': args.log_file,
+        'server_url': args.server_url
+    }
+    
+    if current_config != saved_config:
+        if save_config(current_config, config_file):
+            logger.info('Configuration saved to %s', config_file)
+        else:
+            logger.warning('Failed to save configuration')
 
     # If a server URL is provided, run in polling mode: agent will poll the server
     if args.server_url:
