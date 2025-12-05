@@ -11,58 +11,58 @@ help: ## Show this help message
 
 # Development commands
 dev-build: ## Build development image
-	docker-compose build zoom-telebot-dev
+	docker compose build zoom-telebot-dev
 
 dev-up: ## Start development environment
-	docker-compose --profile dev up zoom-telebot-dev
+	docker compose --profile dev up zoom-telebot-dev
 
 dev-down: ## Stop development environment
-	docker-compose --profile dev down
+	docker compose --profile dev down
 
 dev-logs: ## Show development logs
-	docker-compose --profile dev logs -f zoom-telebot-dev
+	docker compose --profile dev logs -f zoom-telebot-dev
 
 dev-restart: ## Restart development environment
-	docker-compose --profile dev restart zoom-telebot-dev
+	docker compose --profile dev restart zoom-telebot-dev
 
 # Production commands
 prod-build: ## Build production image
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml build
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 
 prod-up: ## Start production environment
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 prod-down: ## Stop production environment
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 
 prod-logs: ## Show production logs
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml logs -f
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f
 
 prod-restart: ## Restart production environment
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml restart
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml restart
 
 # General commands
 build: ## Build default image
-	docker-compose build
+	docker compose build
 
 up: ## Start services
-	docker-compose up -d
+	docker compose up -d
 
 down: ## Stop services
-	docker-compose down
+	docker compose down
 
 restart: ## Restart services
-	docker-compose restart
+	docker compose restart
 
 logs: ## Show logs
-	docker-compose logs -f
+	docker compose logs -f
 
 status: ## Show service status
-	docker-compose ps
+	docker compose ps
 
 # Maintenance commands
 clean: ## Remove containers, networks, and images
-	docker-compose down --rmi all --volumes --remove-orphans
+	docker compose down --rmi all --volumes --remove-orphans
 
 clean-logs: ## Clean log files
 	sudo rm -rf logs/*.log
@@ -74,7 +74,7 @@ backup: ## Create database backup
 	@echo "Backup created in backups/"
 
 backup-docker: ## Create backup using Docker
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml --profile backup run --rm backup-service
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile backup run --rm backup-service
 
 restore: ## Restore database from backup (usage: make restore FILE=backup_file.db)
 	@if [ -z "$(FILE)" ]; then \
@@ -87,29 +87,29 @@ restore: ## Restore database from backup (usage: make restore FILE=backup_file.d
 
 # Testing commands
 test: ## Run tests in container
-	docker-compose run --rm zoom-telebot python dev.py test
+	docker compose run --rm zoom-telebot python dev.py test
 
 test-build: ## Test build process
-	docker-compose build --no-cache
+	docker compose build --no-cache
 
 test-run: ## Run tests using test profile
-	docker-compose --profile test up --abort-on-container-exit --exit-code-from zoom-telebot-test
+	docker compose --profile test up --abort-on-container-exit --exit-code-from zoom-telebot-test
 
 test-clean: ## Clean test environment
-	docker-compose --profile test down --volumes --remove-orphans
+	docker compose --profile test down --volumes --remove-orphans
 
 # Utility commands
 shell: ## Open shell in running container
-	docker-compose exec zoom-telebot /bin/bash
+	docker compose exec zoom-telebot /bin/bash
 
 shell-dev: ## Open shell in development container
-	docker-compose --profile dev exec zoom-telebot-dev /bin/bash
+	docker compose --profile dev exec zoom-telebot-dev /bin/bash
 
 env-check: ## Check environment configuration
-	docker-compose run --rm zoom-telebot python dev.py check
+	docker compose run --rm zoom-telebot python dev.py check
 
 setup: ## Run setup in container
-	docker-compose run --rm zoom-telebot python setup.py
+	docker compose run --rm zoom-telebot python setup.py
 
 # Docker system commands
 docker-clean: ## Clean up Docker system
@@ -117,16 +117,16 @@ docker-clean: ## Clean up Docker system
 	docker volume prune -f
 
 docker-logs: ## Show all Docker logs
-	docker-compose logs --tail=100
+	docker compose logs --tail=100
 
 # Information commands
 info: ## Show system information
 	@echo "=== Docker Information ==="
 	docker --version
-	docker-compose --version
+	docker compose version
 	@echo ""
 	@echo "=== Container Status ==="
-	docker-compose ps
+	docker compose ps
 	@echo ""
 	@echo "=== Volume Status ==="
 	docker volume ls | grep zoom

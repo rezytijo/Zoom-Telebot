@@ -1,18 +1,28 @@
 import asyncio
 import logging
+import signal
+import sys
 from datetime import datetime
 from urllib.parse import urlparse
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 from config import settings
-from handlers import router
+from bot.handlers import router
 from db import init_db, get_user_by_telegram_id, sync_meetings_from_zoom
-from middleware import LoggingMiddleware
+from bot.middleware import LoggingMiddleware
 from zoom import zoom_client
 
 
 logger = logging.getLogger(__name__)
+
+
+def signal_handler(signum, frame):
+    """Handle system signals for graceful shutdown."""
+    signal_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+    logger.info("Received signal %s (%d). Initiating graceful shutdown...", signal_name, signum)
+    # Raise KeyboardInterrupt to be caught by the main exception handler
+    raise KeyboardInterrupt(f"Signal {signal_name} received")
 
 
 async def background_sync_meetings():
@@ -64,22 +74,24 @@ async def on_startup(bot: Bot):
     logger.info("Background timeout check task started")
     # Start agent API server (for agents to poll commands)
     try:
-        from api.agent_api import create_app
-        from aiohttp import web
-        from config import settings
-        app = create_app()
+        # TODO: Implement agent API server
+        # from ..api.agent_api import create_app
+        # from aiohttp import web
+        # from ..config import settings
+        # app = create_app()
+        logger.warning("Agent API server not implemented yet")
         # Determine host from AGENT_BASE_URL if set, else default to 0.0.0.0
-        host = '0.0.0.0'
-        if settings.AGENT_BASE_URL:
-            parsed = urlparse(settings.AGENT_BASE_URL)
-            if parsed.hostname:
-                host = parsed.hostname
-        # Use AppRunner for cleaner startup without "Running on" message
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host, settings.AGENT_API_PORT)
-        await site.start()
-        print(f"======== Agent API server running on http://{host}:{settings.AGENT_API_PORT} ========")
+        # host = '0.0.0.0'
+        # if settings.AGENT_BASE_URL:
+        #     parsed = urlparse(settings.AGENT_BASE_URL)
+        #     if parsed.hostname:
+        #         host = parsed.hostname
+        # # Use AppRunner for cleaner startup without "Running on" message
+        # runner = web.AppRunner(app)
+        # await runner.setup()
+        # site = web.TCPSite(runner, host, settings.AGENT_API_PORT)
+        # await site.start()
+        # print(f"======== Agent API server running on http://{host}:{settings.AGENT_API_PORT} ========")
     except Exception as e:
         logger.exception("Failed to start agent API server: %s", e)
 
@@ -109,6 +121,15 @@ async def main():
     logging.getLogger().addHandler(file_handler)
     logger.info("Initializing bot")
 
+    # Register signal handlers for graceful shutdown
+    try:
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        logger.info("Signal handlers registered for graceful shutdown")
+    except (OSError, ValueError) as e:
+        # Signal handling might not be available on all platforms (e.g., Windows)
+        logger.warning("Signal handling not available: %s", e)
+
     # Validate required settings
     if not settings.bot_token:
         logger.error("TELEGRAM_TOKEN not configured. Please set it in .env file.")
@@ -126,9 +147,19 @@ async def main():
 
     try:
         # run polling by default
+        logger.info("Bot started successfully. Press Ctrl+C to stop.")
         await dp.start_polling(bot)
+    except KeyboardInterrupt:
+        logger.info("Bot shutdown initiated by user (Ctrl+C)")
+    except asyncio.CancelledError:
+        logger.info("Bot polling was cancelled")
+    except Exception as e:
+        logger.error("Unexpected error during bot operation: %s", e)
+        raise
     finally:
+        logger.info("Closing bot session...")
         await bot.session.close()
+        logger.info("Bot session closed. Shutdown complete.")
 
 
 if __name__ == '__main__':

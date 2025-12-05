@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 # Add current directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings
 from db import init_db, add_pending_user, update_user_status, get_user_by_telegram_id

@@ -84,6 +84,7 @@ Makefile
 
 # Documentation (keep in container for reference)
 # Test-Flow.md
+context.md
 
 # Legacy files
 telegram_bot2.py

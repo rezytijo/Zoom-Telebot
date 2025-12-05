@@ -11,7 +11,7 @@ import logging
 from urllib.parse import urlparse
 from aiohttp import web
 from config import settings
-from api.agent_api import create_app
+# from .agent_api import create_app  # TODO: Create agent_api.py
 from db import init_db
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,10 @@ async def main():
     await init_db()
 
     # Create and start the API server
-    app = create_app()
+    # TODO: Implement create_app function
+    # app = create_app()
+    logger.warning("Agent API server not implemented yet")
+    return
 
     # Determine host from AGENT_BASE_URL if set, else default to 0.0.0.0
     host = '0.0.0.0'

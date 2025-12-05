@@ -29,6 +29,16 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
   - **Makefile**: Perintah `make` untuk menyederhanakan manajemen Docker.
   - **Development Helper**: Skrip `dev.py` dengan fitur *auto-restart* saat ada perubahan file.
 
+## 📚 Dokumentasi
+
+Untuk informasi lebih lengkap tentang project ini, silakan baca dokumentasi berikut:
+
+- **[📖 Overview Project](docs/README.md)** - Deskripsi lengkap bot dan fitur-fiturnya
+- **[🚀 Panduan Instalasi](docs/INSTALLATION.md)** - Cara install dan menjalankan bot (PC langsung, Docker run, Docker Compose)
+- **[💻 Development Guide](docs/DEVELOPMENT.md)** - Panduan development, testing, dan best practices
+- **[🔌 API Documentation](docs/API.md)** - Dokumentasi API untuk agent system
+- **[🤖 AI Context Reference](context.md)** - Referensi untuk AI assistant (internal use)
+
 ## 🚀 Memulai
 
 ### Prasyarat
@@ -91,11 +101,28 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
     ```
 
 4.  **Jalankan Bot (dengan Development Runner)**
-    Skrip `dev.py` akan menjalankan validasi awal dan memulai bot dengan *auto-restart*.
+    Skrip `run.py` mendukung berbagai opsi command line untuk memudahkan development.
+    ```bash
+    # Jalankan bot normal
+    python run.py
+
+    # Cek konfigurasi sebelum menjalankan bot
+    python run.py --check-config
+
+    # Jalankan dengan debug logging
+    python run.py --log-level DEBUG
+
+    # Lihat semua opsi yang tersedia
+    python run.py --help
+
+    # Lihat versi bot
+    python run.py --version
+    ```
+
+    Alternatif: Gunakan `dev.py` untuk auto-restart saat development:
     ```bash
     python dev.py run --watch
     ```
-    Untuk bantuan perintah lain, jalankan `python dev.py help`.
 
 5.  **Jalankan API Server Saja (Opsional)**
     Jika Anda hanya ingin menjalankan API server untuk agent tanpa bot Telegram:

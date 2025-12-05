@@ -77,8 +77,8 @@ echo "🚀 Starting bot..."
 # For debugging, try running as root first
 echo "Running as root for testing..."
 if [ $# -eq 0 ]; then
-    echo "No arguments provided, using default command: python main.py"
-    exec python main.py
+    echo "No arguments provided, using default command: python run.py"
+    exec python run.py
 else
     echo "Using provided arguments: $@"
     exec "$@"

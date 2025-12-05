@@ -134,6 +134,16 @@ zoom_telebot.db-journal
 *.db
 *.db-journal
 
+# Private documentation (AI context reference)
+context.md
+
+# Additional development files
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+
 # Backup directories
 backup_*/
 *.back

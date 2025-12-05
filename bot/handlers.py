@@ -12,9 +12,9 @@ def escape_md(text: str) -> str:
     return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
 
 from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, list_agents, count_agents, get_agent, add_agent, remove_agent, add_command, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id
-from keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
+from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
 from config import settings
-from auth import is_allowed_to_create, is_owner_or_admin
+from bot.auth import is_allowed_to_create, is_owner_or_admin
 from zoom import zoom_client
 import logging
 
