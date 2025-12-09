@@ -36,7 +36,7 @@ Untuk informasi lebih lengkap tentang project ini, silakan baca dokumentasi beri
 - **[📖 Overview Project](docs/README.md)** - Deskripsi lengkap bot dan fitur-fiturnya
 - **[🚀 Panduan Instalasi](docs/INSTALLATION.md)** - Cara install dan menjalankan bot (PC langsung, Docker run, Docker Compose)
 - **[💻 Development Guide](docs/DEVELOPMENT.md)** - Panduan development, testing, dan best practices
-- **[🔌 API Documentation](docs/API.md)** - Dokumentasi API untuk agent system
+- **[🔌 C2 Framework Guide](C2_SETUP_GUIDE.md)** - Panduan setup dan penggunaan C2 framework untuk agent management
 - **[🤖 AI Context Reference](context.md)** - Referensi untuk AI assistant (internal use)
 
 ## 🚀 Memulai
@@ -124,13 +124,6 @@ Untuk informasi lebih lengkap tentang project ini, silakan baca dokumentasi beri
     python dev.py run --watch
     ```
 
-5.  **Jalankan API Server Saja (Opsional)**
-    Jika Anda hanya ingin menjalankan API server untuk agent tanpa bot Telegram:
-    ```bash
-    python api_server.py
-    ```
-    API server akan berjalan di `http://localhost:8767` (atau sesuai konfigurasi `AGENT_API_PORT`).
-
 ## ⚙️ Konfigurasi
 
 Semua konfigurasi diatur melalui file `.env`.
@@ -171,24 +164,248 @@ Semua konfigurasi diatur melalui file `.env`.
 
 ## 🏗️ Struktur Proyek
 
+Proyek ini diorganisir dalam struktur modular untuk maintainability dan scalability:
+
 ```
-├── 📂 data/
-│   ├── zoom_telebot.db
-│   └── shorteners.json      # Konfigurasi provider URL Shortener
-├── 📜 .env                   # File konfigurasi environment (wajib dibuat)
-├── 📜 .env.example          # Contoh file .env
-├── 📜 config.py             # Memuat dan mengelola konfigurasi
-├── 📜 main.py               # Titik masuk utama aplikasi bot
-├── 📜 handlers.py           # Logika untuk semua perintah dan callback bot
-├── 📜 db.py                 # Operasi database (SQLite)
-├── 📜 zoom.py               # Klien untuk interaksi dengan Zoom API
-├── 📜 shortener.py          # Logika untuk layanan URL shortener
-├── 📜 setup.py               # Skrip inisialisasi dan validasi environment
-├── 📜 dev.py                 # Skrip helper untuk development
-├── 📜 requirements.txt       # Daftar dependensi Python
-├── 🐳 Dockerfile              # Resep untuk membangun image Docker
-├── 🐳 docker-compose.yml     # Konfigurasi dasar Docker Compose
-└── 📜 Makefile               # Pintasan untuk perintah-perintah Docker
+BotTelegramZoom/
+│
+├── 📂 bot/                    # Core Bot Logic & Handlers
+│   ├── __init__.py
+│   ├── main.py               # Titik masuk utama & initialization bot
+│   ├── handlers.py           # Semua message handlers, callback queries, commands
+│   ├── keyboards.py          # ReplyKeyboard & InlineKeyboard definitions
+│   ├── auth.py               # Authentication & authorization system
+│   ├── middleware.py         # Middleware untuk logging, auth checks, rate limiting
+│   └── __pycache__/
+│
+├── 📂 zoom/                   # Zoom API Integration
+│   ├── __init__.py
+│   ├── zoom.py               # Zoom API client (OAuth, meeting CRUD, recording)
+│   └── __pycache__/
+│
+├── 📂 db/                     # Database Layer
+│   ├── __init__.py
+│   ├── db.py                 # Database operations (user, meeting, shortener)
+│   └── __pycache__/
+│
+├── 📂 config/                 # Configuration Management
+│   ├── __init__.py
+│   ├── config.py             # Settings dataclass, environment parsing, defaults
+│   └── __pycache__/
+│
+├── 📂 c2/                     # C2 Framework Integration (Sliver)
+│   ├── __init__.py
+│   ├── sliver_zoom_c2.py     # Sliver C2 client untuk remote agent control
+│   └── __pycache__/
+│
+├── 📂 shortener/             # URL Shortener Service
+│   ├── __init__.py
+│   ├── shortener.py          # Multi-provider shortener (TinyURL, S.id, Bitly)
+│   └── __pycache__/
+│
+├── 📂 api/                    # API Server (Optional)
+│   ├── __init__.py
+│   ├── api_server.py         # FastAPI/aiohttp server untuk webhooks, API endpoints
+│   └── __pycache__/
+│
+├── 📂 agent/                  # Agent Management (Optional)
+│   ├── __init__.py
+│   ├── todo_agent.md         # Documentation untuk agent deployment
+│   └── __pycache__/
+│
+├── 📂 scripts/               # Utility & Setup Scripts
+│   ├── __init__.py
+│   ├── setup.py              # Initial setup & environment validation
+│   └── dev.py                # Development runner (alternative untuk run.py)
+│
+├── 📂 docker/                # Docker Configuration
+│   ├── __init__.py
+│   ├── Dockerfile            # Docker image definition
+│   └── docker-entrypoint.sh  # Entry point script untuk container
+│
+├── 📂 c2_server/             # C2 Server Setup (Optional)
+│   ├── admin.cfg             # C2 server admin config
+│   ├── *.bat                 # Windows batch scripts untuk setup
+│   ├── README_Windows.md     # Setup guide untuk Windows
+│   ├── implants/             # Pre-built implants (dummy_agent.bat)
+│   ├── logs/                 # C2 server logs
+│   └── generate_implants_api.py  # Script untuk generate implants
+│
+├── 📂 data/                  # Persistent Data
+│   ├── shorteners.json       # Dynamic config untuk URL shortener providers
+│   └── shorteners.json.back  # Backup shorteners.json
+│
+├── 📂 docs/                  # Documentation
+│   ├── __init__.py
+│   ├── README.md             # Project overview & quick start
+│   ├── INSTALLATION.md       # Detailed installation guide
+│   ├── DEVELOPMENT.md        # Development guide & best practices
+│   ├── API.md                # API documentation
+│   ├── API_TESTING_GUIDE.md  # Guide untuk testing API
+│   └── C2_SETUP_GUIDE.md     # Detailed C2 Framework setup
+│
+├── 📂 logs/                  # Application Logs
+│   └── *.log                 # Log files (created at runtime)
+│
+├── 📂 tests/                 # Unit Tests
+│   ├── __init__.py
+│   ├── test_c2.bat           # Windows batch untuk C2 testing
+│   ├── test_c2_integration.py # C2 integration tests
+│   ├── test_mock_agents.py   # Mock agent tests
+│   └── __pycache__/
+│
+├── 📂 __pycache__/           # Compiled Python (auto-generated)
+│
+├── 🐳 Dockerfile             # Docker image recipe
+├── 🐳 docker-compose.yml     # Docker Compose orchestration
+│
+├── 📄 .env                   # Environment variables (⚠️ create from .env.example)
+├── 📄 .env.example           # Template untuk .env dengan 30+ variables
+├── 📄 Makefile               # Shortcuts untuk Docker commands
+│
+├── 📄 run.py                 # Main entry point (polling mode)
+├── 📄 dev.py                 # Development runner dengan auto-restart
+├── 📄 demo_c2.py             # Demo script untuk C2 testing
+├── 📄 setup_c2.sh            # Shell script untuk C2 server setup
+│
+├── 📄 requirements.txt        # Python dependencies (poetry-style format)
+├── 📄 Readme.md              # Project overview (ini)
+├── 📄 context.md             # AI assistant context reference
+├── 📄 cleanup_dirs.py         # Cleanup script untuk __pycache__, logs
+└── 📄 cleanup_dirs.bat        # Windows batch cleanup script
+```
+
+### 📝 Deskripsi Folder & File
+
+#### **bot/** - Bot Core Logic
+Berisi semua logika bot Telegram dan handlers:
+- **main.py**: Inisialisasi bot, setup dispatcher, start polling/webhook
+- **handlers.py**: Semua message handlers (/start, /help, /meet, dll) dan callback queries
+- **keyboards.py**: Tombol dan keyboard layouts (ReplyKeyboard, InlineKeyboard)
+- **auth.py**: Sistem role-based access (owner, admin, user)
+- **middleware.py**: Pre/post processing (auth checks, logging, rate limiting)
+
+#### **zoom/** - Zoom API Integration
+Klien untuk berkomunikasi dengan Zoom API:
+- **zoom.py**: OAuth token management, meeting CRUD, recording control, auto-sync
+
+#### **db/** - Database Operations
+Data layer untuk SQLite/PostgreSQL:
+- **db.py**: User management, meeting storage, shortener URLs
+
+#### **config/** - Configuration Management
+Parsing dan validasi environment variables:
+- **config.py**: Settings dataclass dengan defaults, environment parsing, type safety
+
+#### **c2/** - C2 Framework (Sliver)
+Integrasi dengan Sliver C2 Framework untuk remote agent control:
+- **sliver_zoom_c2.py**: Client untuk mTLS communication dengan C2 server, agent commands
+
+#### **shortener/** - URL Shortener
+Multi-provider URL shortener service:
+- **shortener.py**: Support TinyURL, S.id, Bitly dengan dynamic provider config
+
+#### **api/** - API Server (Optional)
+Webhook dan REST API endpoints:
+- **api_server.py**: FastAPI/aiohttp server untuk webhook events, external API
+
+#### **c2_server/** - C2 Server Setup
+C2 Framework server configuration dan utilities:
+- **admin.cfg**: C2 server admin configuration
+- **generate_implants_api.py**: Otomasi pembuatan implants (agents)
+- **implants/**: Pre-built agent executables
+
+#### **data/** - Persistent Data
+Data files yang disimpan di disk:
+- **shorteners.json**: Dynamic config untuk URL shortener providers (tambah provider tanpa code change)
+
+#### **docs/** - Documentation
+Lengkap dokumentasi project:
+- **INSTALLATION.md**: Setup lokal, Docker, Docker Compose
+- **DEVELOPMENT.md**: Development workflow, testing, best practices
+- **C2_SETUP_GUIDE.md**: Detail setup Sliver C2 framework
+- **API.md**: API endpoints documentation
+- **API_TESTING_GUIDE.md**: Testing guide untuk API
+
+#### **tests/** - Unit Tests
+Test suite untuk validasi functionality:
+- **test_c2_integration.py**: Tests untuk C2 integration
+- **test_mock_agents.py**: Mock agent tests
+
+### 🔄 Data Flow
+
+```
+┌──────────────────────┐
+│   Telegram User      │
+└──────────────┬───────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│   bot/handlers.py           │ ← Receive & process user input
+├──────────────────────────────────────────────────────────────────┤
+│  • /start, /help            │
+│  • /meet (create meeting)   │
+│  • /zoom_control (agent)    │
+│  • Callbacks (keyboards)    │
+└──────────────────┬──────┬──────┬──────────────────────────────┘
+                  │      │      │
+            ┌─────┴──┐  │  ┌─────┴──┐
+            ▼        ▼  ▼  ▼        ▼
+       ┌────────────┐ ┌──────────────┐ ┌──────────────┐
+       │ db/db.py   │ │ zoom/zoom.py │ │ c2/sliver    │
+       └──────┬─────┘ └────────┬─────┘ └──────┬───────┘
+              ▼                ▼               ▼
+         ┌─────────────┐ ┌──────────┐  ┌──────────────┐
+         │ SQLite/     │ │ Zoom API │  │ C2 Server    │
+         │ PostgreSQL  │ │ (OAuth)  │  │ (mTLS)       │
+         └─────────────┘ └──────────┘  └──────────────┘
+```
+
+### 🔐 Security Layers
+
+1. **Authentication (auth.py)**:
+   - Role-based access control (owner, admin, user)
+   - Whitelist system untuk new users
+   - Ban/unban management
+
+2. **Middleware (middleware.py)**:
+   - Auth checks sebelum execution
+   - Rate limiting untuk prevent abuse
+   - Request/response logging
+
+3. **C2 Security (c2/sliver_zoom_c2.py)**:
+   - mTLS encryption untuk agent communication
+   - Token-based authentication
+   - Real-time agent status monitoring
+
+4. **Database Security (db/db.py)**:
+   - Prepared statements untuk prevent SQL injection
+   - User role validation
+   - Data encryption untuk sensitive info
+
+### 📊 Development vs Production
+
+**Development**:
+```bash
+# Environment
+DEFAULT_MODE=polling        # Polling untuk testing
+DATABASE_URL=sqlite://      # SQLite lokal
+LOG_LEVEL=DEBUG             # Verbose logging
+
+# Runner
+python dev.py run --watch   # Auto-restart on file changes
+```
+
+**Production**:
+```bash
+# Environment
+DEFAULT_MODE=webhook        # Webhook untuk Telegram updates
+DATABASE_URL=postgresql://  # PostgreSQL production
+LOG_LEVEL=INFO              # Normal logging
+C2_ENABLED=true             # C2 Framework aktif
+
+# Runner
+docker compose up -d        # Docker Compose orchestration
 ```
 
 ## 📄 Lisensi
