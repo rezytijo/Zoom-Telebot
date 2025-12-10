@@ -2,7 +2,7 @@ import time
 import base64
 import asyncio
 import aiohttp
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from config import settings
 import logging
 
@@ -312,6 +312,68 @@ class ZoomClient:
         except Exception as e:
             self.logger.exception("Fallback delete failed for meeting %s: %s", meeting_id, e)
             return False
+
+
+    async def start_meeting(self, meeting_id: str) -> Dict[str, Any]:
+        """Start a scheduled Zoom meeting.
+
+        Returns meeting details with start_url and join_url.
+        """
+        self.logger.info("Starting meeting %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/status"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {"action": "start"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.logger.info("Meeting %s started successfully", meeting_id)
+                    return data
+                else:
+                    text = await resp.text()
+                    self.logger.error("Failed to start meeting %s: %s - %s", meeting_id, resp.status, text)
+                    raise Exception(f"Failed to start meeting: {resp.status} - {text}")
+
+
+    async def get_meeting_participants(self, meeting_id: str) -> List[Dict[str, Any]]:
+        """Get list of participants in an active meeting."""
+        self.logger.info("Getting participants for meeting %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/metrics/meetings/{meeting_id}/participants"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    participants = data.get('participants', [])
+                    self.logger.info("Retrieved %d participants for meeting %s", len(participants), meeting_id)
+                    return participants
+                else:
+                    text = await resp.text()
+                    self.logger.error("Failed to get participants for meeting %s: %s - %s", meeting_id, resp.status, text)
+                    return []
+
+
+    async def mute_all_participants(self, meeting_id: str) -> bool:
+        """Mute all participants in an active meeting."""
+        self.logger.info("Muting all participants in meeting %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/status"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {"action": "mute_all"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, json=payload, headers=headers) as resp:
+                if resp.status in (204, 200):
+                    self.logger.info("All participants muted in meeting %s", meeting_id)
+                    return True
+                else:
+                    text = await resp.text()
+                    self.logger.error("Failed to mute all participants in meeting %s: %s - %s", meeting_id, resp.status, text)
+                    return False
 
 
 zoom_client = ZoomClient()

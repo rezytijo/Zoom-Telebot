@@ -216,6 +216,294 @@ class ZoomEditStates(StatesGroup):
     waiting_for_time = State()
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith('control_zoom:'))
+async def cb_control_zoom(c: CallbackQuery):
+    """Show Zoom control interface for a meeting using Zoom API."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Menu ini hanya untuk Admin/Owner.")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+
+    # Find meeting
+    meetings = await list_meetings()
+    meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
+    if not meeting:
+        await c.answer("Meeting tidak ditemukan")
+        return
+
+    topic = meeting.get('topic', 'No Topic')
+    join_url = meeting.get('join_url', '')
+
+    # Get meeting status from Zoom API
+    try:
+        zoom_meeting_details = await zoom_client.get_meeting(meeting_id)
+        meeting_status = zoom_meeting_details.get('status', 'unknown')
+        participant_count = zoom_meeting_details.get('participants_count', 0)
+    except Exception as e:
+        logger.error(f"Failed to get Zoom meeting details: {e}")
+        meeting_status = 'unknown'
+        participant_count = 0
+
+    text = (
+        f"🎥 <b>Kontrol Zoom Meeting</b>\n\n"
+        f"<b>{topic}</b>\n"
+        f"🆔 Meeting ID: <code>{meeting_id}</code>\n"
+        f"📊 Status: {meeting_status.title()}\n"
+        f"👥 Participants: {participant_count}\n"
+        f"🔗 {join_url}\n\n"
+        "Pilih aksi kontrol:"
+    )
+
+    # Create control buttons based on meeting status
+    kb_rows = []
+
+    if meeting_status == 'started':
+        kb_rows.extend([
+            [InlineKeyboardButton(text="⏹️ End Meeting", callback_data=f"end_zoom_meeting:{meeting_id}")],
+            [InlineKeyboardButton(text="👥 Get Participants", callback_data=f"get_zoom_participants:{meeting_id}")],
+            [InlineKeyboardButton(text="🔇 Mute All", callback_data=f"mute_all_participants:{meeting_id}")]
+        ])
+    else:
+        kb_rows.append([InlineKeyboardButton(text="▶️ Start Meeting", callback_data=f"start_zoom_meeting:{meeting_id}")])
+
+    # Always available actions
+    kb_rows.extend([
+        [InlineKeyboardButton(text="📊 Meeting Details", callback_data=f"zoom_meeting_details:{meeting_id}")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Daftar", callback_data="list_meetings")]
+    ])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await c.answer()
+
+
+# ===== ZOOM CONTROL HANDLERS =====
+
+@router.callback_query(lambda c: c.data and c.data.startswith('start_zoom_meeting:'))
+async def cb_start_zoom_meeting(c: CallbackQuery):
+    """Start a Zoom meeting via Zoom API."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+
+    await c.answer("Memulai meeting...")
+
+    try:
+        # Start the meeting via Zoom API
+        result = await zoom_client.start_meeting(meeting_id)
+
+        if result.get('start_url'):
+            text = (
+                "✅ <b>Meeting Berhasil Dimulai!</b>\n\n"
+                f"🔗 <b>Start URL:</b> {result['start_url']}\n"
+                f"🔗 <b>Join URL:</b> {result.get('join_url', 'N/A')}\n\n"
+                "Gunakan Start URL untuk memulai meeting sebagai host."
+            )
+        else:
+            text = "❌ Gagal memulai meeting. Periksa status meeting di Zoom."
+
+    except Exception as e:
+        logger.error(f"Failed to start Zoom meeting {meeting_id}: {e}")
+        text = f"❌ Error: {str(e)}"
+
+    # Return to control interface
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
+        [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+    ])
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('end_zoom_meeting:'))
+async def cb_end_zoom_meeting(c: CallbackQuery):
+    """End a Zoom meeting via Zoom API."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+
+    await c.answer("Mengakhiri meeting...")
+
+    try:
+        # End the meeting via Zoom API
+        result = await zoom_client.end_meeting(meeting_id)
+        text = "✅ <b>Meeting berhasil diakhiri.</b>"
+
+    except Exception as e:
+        logger.error(f"Failed to end Zoom meeting {meeting_id}: {e}")
+        text = f"❌ Error: {str(e)}"
+
+    # Return to control interface
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
+        [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+    ])
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('get_zoom_participants:'))
+async def cb_get_zoom_participants(c: CallbackQuery):
+    """Get participants list from Zoom meeting."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+
+    await c.answer("Mengambil data participants...")
+
+    try:
+        # Get participants via Zoom API
+        participants = await zoom_client.get_meeting_participants(meeting_id)
+
+        if participants:
+            text = f"👥 <b>Participants ({len(participants)})</b>\n\n"
+            for i, p in enumerate(participants[:20], 1):  # Limit to 20 participants
+                name = p.get('name', 'Unknown')
+                email = p.get('user_email', 'N/A')
+                role = p.get('role', 'attendee')
+                join_time = p.get('join_time', 'N/A')
+
+                text += f"{i}. <b>{name}</b>\n"
+                text += f"   📧 {email}\n"
+                text += f"   👤 Role: {role}\n"
+                text += f"   🕛 Join: {join_time}\n\n"
+
+            if len(participants) > 20:
+                text += f"... dan {len(participants) - 20} participants lainnya."
+        else:
+            text = "👥 <b>Tidak ada participants aktif saat ini.</b>"
+
+    except Exception as e:
+        logger.error(f"Failed to get Zoom participants for meeting {meeting_id}: {e}")
+        text = f"❌ Error: {str(e)}"
+
+    # Return to control interface
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Refresh Participants", callback_data=f"get_zoom_participants:{meeting_id}")],
+        [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
+        [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+    ])
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('mute_all_participants:'))
+async def cb_mute_all_participants(c: CallbackQuery):
+    """Mute all participants in Zoom meeting."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+
+    await c.answer("Mute all participants...")
+
+    try:
+        # Mute all participants via Zoom API
+        result = await zoom_client.mute_all_participants(meeting_id)
+        text = "✅ <b>Semua participants berhasil di-mute.</b>"
+
+    except Exception as e:
+        logger.error(f"Failed to mute all participants in meeting {meeting_id}: {e}")
+        text = f"❌ Error: {str(e)}"
+
+    # Return to control interface
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
+        [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+    ])
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('zoom_meeting_details:'))
+async def cb_zoom_meeting_details(c: CallbackQuery):
+    """Get detailed information about Zoom meeting."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+
+    await c.answer("Mengambil detail meeting...")
+
+    try:
+        # Get meeting details via Zoom API
+        details = await zoom_client.get_meeting(meeting_id)
+
+        text = "📊 <b>Meeting Details</b>\n\n"
+        text += f"🆔 <b>ID:</b> {meeting_id}\n"
+        text += f"📝 <b>Topic:</b> {details.get('topic', 'N/A')}\n"
+        text += f"👤 <b>Host:</b> {details.get('host_email', 'N/A')}\n"
+        text += f"📊 <b>Status:</b> {details.get('status', 'N/A')}\n"
+        text += f"🕛 <b>Start Time:</b> {details.get('start_time', 'N/A')}\n"
+        text += f"⏱️ <b>Duration:</b> {details.get('duration', 'N/A')} minutes\n"
+        text += f"👥 <b>Participants:</b> {details.get('participants_count', 0)}\n"
+        text += f"🎥 <b>Recording:</b> {details.get('recording_enabled', False)}\n"
+        text += f"🔗 <b>Join URL:</b> {details.get('join_url', 'N/A')}\n"
+
+        if details.get('settings'):
+            settings = details['settings']
+            text += f"\n⚙️ <b>Settings:</b>\n"
+            text += f"  🔒 Waiting Room: {settings.get('waiting_room', False)}\n"
+            text += f"  🔇 Auto Mute: {settings.get('auto_mute', False)}\n"
+            text += f"  🎥 Auto Record: {settings.get('auto_recording', 'none')}\n"
+
+    except Exception as e:
+        logger.error(f"Failed to get Zoom meeting details for {meeting_id}: {e}")
+        text = f"❌ Error getting meeting details: {str(e)}"
+
+    # Return to control interface
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
+        [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+    ])
+
+    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+
 @router.callback_query(lambda c: c.data and c.data.startswith('manage_meeting:'))
 async def cb_manage_meeting(c: CallbackQuery):
     """Show management options for a specific meeting."""
@@ -1730,13 +2018,18 @@ async def cb_list_meetings(c: CallbackQuery):
             
             text += "\n"
         
-        # Build an inline keyboard with Manage buttons per meeting (one button per meeting)
+        # Build an inline keyboard with control buttons per meeting
         kb_rows = []
         for m_rec in meetings:
             mid = m_rec.get('zoom_meeting_id') or ''
-            topic_short = (m_rec.get('topic') or 'No Topic')[:30]
+            topic_short = (m_rec.get('topic') or 'No Topic')[:25]
             if mid:
-                kb_rows.append([InlineKeyboardButton(text=f"⚙️ Manage: {topic_short}", callback_data=f"manage_meeting:{mid}")])
+                # Create row with 3 control buttons for each meeting
+                kb_rows.append([
+                    InlineKeyboardButton(text=f"🎥 {topic_short}", callback_data=f"control_zoom:{mid}"),
+                    InlineKeyboardButton(text="✏️ Edit", callback_data=f"edit_meeting:{mid}"),
+                    InlineKeyboardButton(text="🗑️ Delete", callback_data=f"confirm_delete:{mid}")
+                ])
 
         # add navigation / back buttons
         kb_rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="list_meetings"), InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main")])
