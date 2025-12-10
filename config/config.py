@@ -58,6 +58,7 @@ class Settings:
     zoom_user_id: str | None = os.getenv("ZOOM_USER_ID")
     zoom_user_email: str | None = os.getenv("ZOOM_USER_EMAIL")
     zoom_audience: str = os.getenv("ZOOM_AUDIENCE", "https://api.zoom.us")
+    zoom_control_mode: str = os.getenv("ZOOM_CONTROL_MODE", "cloud")
 
     # Shortener providers
     # DEFAULT_SHORTENER: 'sid', 'bitly', 'tinyurl'
