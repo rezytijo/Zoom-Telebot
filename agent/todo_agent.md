@@ -1,10 +1,36 @@
-# Agent System TODO - Remote Control Clients
+# Agent System TODO - DEPRECATED
 
-## 📁 **Purpose of This Folder**
+⚠️ **DEPRECATED**: This agent system has been replaced by C2 Framework.
 
-This folder (`agent/`) is **NOT** for the Agent API Server. The Agent API Server is located in `../api/api_server.py`.
+## Important Notice
 
-This folder is specifically for storing **Agent Client Software** - the remote control clients that connect to the Agent API Server.
+The traditional agent system with polling clients has been **completely replaced** by the Sliver C2 Framework.
+
+### What Changed
+- **Old System**: Polling agent clients connecting to REST API server
+- **New System**: Implant-based agents with real-time C2 communication
+
+### Migration Guide
+1. **Stop developing** polling agent clients
+2. **Start using** Sliver implants for agent deployment
+3. **Refer to** `C2_SETUP_GUIDE.md` for implant generation and deployment
+4. **Use** Sliver console for agent management and interaction
+
+### Removed Components
+- Agent client software development
+- Polling-based communication
+- REST API integration
+- Manual agent deployment scripts
+
+### New Components
+- Sliver implant generation
+- C2 server-based agent management
+- Real-time command execution
+- Secure mTLS communication
+
+---
+
+*This document is kept for historical reference only. All new agent development should use the C2 Framework.*
 
 ## 🎯 **What Goes Here**
 

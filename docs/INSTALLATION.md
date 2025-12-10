@@ -247,14 +247,6 @@ python scripts/setup.py
 ```
 
 #### Port Conflicts
-```bash
-# Cek port usage
-netstat -tulpn | grep 8767
-
-# Change port di .env
-AGENT_API_PORT=8768
-```
-
 ## 📊 Monitoring
 
 ### Logs

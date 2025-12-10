@@ -72,28 +72,6 @@ async def on_startup(bot: Bot):
     # Start background timeout check task
     asyncio.create_task(background_check_timeouts())
     logger.info("Background timeout check task started")
-    # Start agent API server (for agents to poll commands)
-    try:
-        # TODO: Implement agent API server
-        # from ..api.agent_api import create_app
-        # from aiohttp import web
-        # from ..config import settings
-        # app = create_app()
-        logger.warning("Agent API server not implemented yet")
-        # Determine host from AGENT_BASE_URL if set, else default to 0.0.0.0
-        # host = '0.0.0.0'
-        # if settings.AGENT_BASE_URL:
-        #     parsed = urlparse(settings.AGENT_BASE_URL)
-        #     if parsed.hostname:
-        #         host = parsed.hostname
-        # # Use AppRunner for cleaner startup without "Running on" message
-        # runner = web.AppRunner(app)
-        # await runner.setup()
-        # site = web.TCPSite(runner, host, settings.AGENT_API_PORT)
-        # await site.start()
-        # print(f"======== Agent API server running on http://{host}:{settings.AGENT_API_PORT} ========")
-    except Exception as e:
-        logger.exception("Failed to start agent API server: %s", e)
 
 
 async def main():

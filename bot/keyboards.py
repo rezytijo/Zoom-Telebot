@@ -1,7 +1,83 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from typing import List, Dict
 from shortener import get_available_providers
 
 
+def main_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
+    """Main menu keyboard with all available features organized by category."""
+    keyboard = []
+
+    # Meeting Management Section
+    keyboard.append([InlineKeyboardButton(text="📅 Manajemen Meeting", callback_data="menu_meetings")])
+
+    # URL Tools Section
+    keyboard.append([InlineKeyboardButton(text="🔗 URL Shortener", callback_data="menu_shortener")])
+
+    # Admin/Owner Only Sections
+    if user_role in ["admin", "owner"]:
+        keyboard.append([InlineKeyboardButton(text="👥 Manajemen User", callback_data="menu_users")])
+        keyboard.append([InlineKeyboardButton(text="💾 Backup & Restore", callback_data="menu_backup")])
+
+    # Information Section
+    keyboard.append([InlineKeyboardButton(text="ℹ️ Informasi & Bantuan", callback_data="menu_info")])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def meetings_menu_keyboard() -> InlineKeyboardMarkup:
+    """Meeting management submenu."""
+    keyboard = [
+        [InlineKeyboardButton(text="📝 Buat Meeting Baru", callback_data="create_meeting")],
+        [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")],
+        [InlineKeyboardButton(text="🔄 Sync dari Zoom", callback_data="sync_meetings")],
+        [InlineKeyboardButton(text="⏰ Cek Meeting Expired", callback_data="check_expired")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def users_menu_keyboard() -> InlineKeyboardMarkup:
+    """User management submenu (admin/owner only)."""
+    keyboard = [
+        [InlineKeyboardButton(text="📊 Semua User", callback_data="all_users:0")],
+        [InlineKeyboardButton(text="⏳ User Pending", callback_data="pending_users")],
+        [InlineKeyboardButton(text="🔍 Cari User", callback_data="search_user")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def backup_menu_keyboard() -> InlineKeyboardMarkup:
+    """Backup and restore submenu (admin/owner only)."""
+    keyboard = [
+        [InlineKeyboardButton(text="💾 Backup Database", callback_data="backup_db")],
+        [InlineKeyboardButton(text="📦 Restore Database", callback_data="restore_db")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def info_menu_keyboard() -> InlineKeyboardMarkup:
+    """Information and help submenu."""
+    keyboard = [
+        [InlineKeyboardButton(text="❓ Bantuan (Help)", callback_data="show_help")],
+        [InlineKeyboardButton(text="ℹ️ Tentang Bot", callback_data="show_about")],
+        [InlineKeyboardButton(text="👤 Info Saya", callback_data="whoami")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def shortener_menu_keyboard() -> InlineKeyboardMarkup:
+    """URL shortener submenu."""
+    keyboard = [
+        [InlineKeyboardButton(text="🔗 Shorten URL", callback_data="short_url")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+# Legacy keyboards (keeping for backward compatibility)
 def pending_user_buttons(telegram_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [

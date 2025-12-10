@@ -11,8 +11,8 @@ def escape_md(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
 
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, list_agents, count_agents, get_agent, add_agent, remove_agent, add_command, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id
-from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id
+from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons, main_menu_keyboard, meetings_menu_keyboard, users_menu_keyboard, backup_menu_keyboard, info_menu_keyboard, shortener_menu_keyboard
 from config import settings
 from bot.auth import is_allowed_to_create, is_owner_or_admin
 from zoom import zoom_client
@@ -176,47 +176,10 @@ def _parse_time_24h(time_str: str) -> Optional[time]:
         return None
 
 
-def _filter_online_agents(agents: List[Dict], online_threshold_minutes: int = 5) -> List[Dict]:
-    """Filter agents to only include those that are online (seen within the last threshold minutes).
-    
-    Args:
-        agents: List of agent dictionaries from database
-        online_threshold_minutes: How many minutes ago an agent must have been seen to be considered online
-        
-    Returns:
-        List of online agents only
-    """
-    if not agents:
-        return []
-    
-    from datetime import datetime, timedelta
-    
-    # Calculate threshold time
-    threshold_time = datetime.now() - timedelta(minutes=online_threshold_minutes)
-    
-    online_agents = []
-    for agent in agents:
-        last_seen = agent.get('last_seen')
-        if last_seen:
-            try:
-                # Parse the last_seen timestamp
-                # Assuming format is ISO string like '2025-11-13 00:17:25'
-                if isinstance(last_seen, str):
-                    last_seen_dt = datetime.fromisoformat(last_seen.replace(' ', 'T'))
-                elif isinstance(last_seen, datetime):
-                    last_seen_dt = last_seen
-                else:
-                    continue
-                
-                # Check if agent was seen within threshold
-                if last_seen_dt >= threshold_time:
-                    online_agents.append(agent)
-                    
-            except (ValueError, TypeError):
-                # If we can't parse the timestamp, assume offline
-                continue
-    
-    return online_agents
+
+
+
+
 
 
 @router.message(Command("whoami"))
@@ -314,22 +277,30 @@ async def cb_manage_meeting(c: CallbackQuery):
         "Pilih tindakan di bawah ini:"
     )
 
-    # Check live status to determine button text
-    # First sync with Zoom API to get accurate status
-    live_status = await sync_meeting_live_status_from_zoom(zoom_client, meeting_id)
-    if live_status == 'started':
-        start_button_text = "🎛️ Control Meeting"
-        start_callback = f"control_meeting:{meeting_id}"
+    if not _agent_api_enabled():
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗑️ Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
+            [InlineKeyboardButton(text="✏️ Edit Meeting", callback_data=f"edit_meeting:{meeting_id}" )],
+            [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
+        ])
+        text += "\n\n🔒 Agent API dimatikan (AGENT_API_ENABLED=false). Rekaman akan memakai auto recording Zoom."
     else:
-        start_button_text = "▶️ Start Meeting on Agent"
-        start_callback = f"start_on_agent:{meeting_id}"
+        # Check live status to determine button text
+        # First sync with Zoom API to get accurate status
+        live_status = await sync_meeting_live_status_from_zoom(zoom_client, meeting_id)
+        if live_status == 'started':
+            start_button_text = "🎛️ Control Meeting"
+            start_callback = f"control_meeting:{meeting_id}"
+        else:
+            start_button_text = "▶️ Start Meeting on Agent"
+            start_callback = f"start_on_agent:{meeting_id}"
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=start_button_text, callback_data=start_callback)],
-        [InlineKeyboardButton(text="🗑️ Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
-        [InlineKeyboardButton(text="✏️ Edit Meeting", callback_data=f"edit_meeting:{meeting_id}" )],
-        [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
-    ])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=start_button_text, callback_data=start_callback)],
+            [InlineKeyboardButton(text="🗑️ Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
+            [InlineKeyboardButton(text="✏️ Edit Meeting", callback_data=f"edit_meeting:{meeting_id}" )],
+            [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
+        ])
 
     await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
     await c.answer()
@@ -338,6 +309,9 @@ async def cb_manage_meeting(c: CallbackQuery):
 @router.callback_query(lambda c: c.data and c.data.startswith('start_on_agent:'))
 async def cb_start_on_agent(c: CallbackQuery):
     """Show agent selection to start/open meeting on a specific agent host."""
+    if not _agent_api_enabled():
+        await _agent_api_disabled_response(c)
+        return
     meeting_id = c.data.split(':', 1)[1]
     agents = _filter_online_agents(await list_agents())
     if not agents:
@@ -519,265 +493,7 @@ async def cb_agent_start(c: CallbackQuery, state: FSMContext):
     await c.answer()
 
 
-@router.message(Command("add_agent"))
-async def cmd_add_agent(msg: Message):
-    """Add an agent manually: /add_agent <name>
 
-    The agent base_url will be taken from configuration (AGENT_BASE_URL) if set
-    otherwise derived from the server's IP using AGENT_DEFAULT_PORT.
-    """
-    if msg.from_user is None:
-        return
-    # only owner/admin
-    user = await get_user_by_telegram_id(msg.from_user.id)
-    if not is_owner_or_admin(user):
-        await msg.reply("Hanya owner/admin yang dapat menambahkan agent.")
-        return
-    parts = (msg.text or '').split()
-    if len(parts) < 2:
-        await msg.reply("Format: /add_agent <name>")
-        return
-    _, name = parts[:2]
-
-    # generate a strong api key for the agent
-    import secrets, socket
-    api_key = secrets.token_urlsafe(32)
-    os_type = None
-
-    # derive a sensible server URL for agents to poll: prefer hostname discovery
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        try:
-            local_ip = socket.gethostbyname(socket.gethostname())
-        except Exception:
-            local_ip = '127.0.0.1'
-
-    server_url = f"http://{local_ip}:{settings.AGENT_API_PORT}"
-
-    try:
-        agent_id = await add_agent(name, '', api_key, os_type)
-
-        # Compose user-facing instruction: polling mode is recommended
-        polling_cmd = f'python agent/agent_server.py --api-key "{api_key}" --server-url "{server_url}"'
-
-        resp = (
-            f"✅ Agent '{name}' dibuat. ID: {agent_id}\n\n"
-            f"API Key (simpan dengan aman):\n<code>{api_key}</code>\n\n"
-            "Contoh perintah untuk menjalankan agen (Polling mode — direkomendasikan, agen akan register & poll ke server):\n"
-            f"PowerShell:\n<code>{polling_cmd}</code>\n\n"
-            "Catatan: ganti `server_url` di atas dengan URL publik server Anda jika diperlukan (HTTPS direkomendasikan)."
-        )
-
-        # Add button to show agents list
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Lihat Daftar Agent", callback_data="agents_page:1")]
-        ])
-
-        await msg.reply(resp, reply_markup=kb, parse_mode='HTML')
-    except Exception as e:
-        logger.exception("Failed to add agent: %s", e)
-        await msg.reply(f"❌ Gagal menambahkan agent: {e}")
-
-
-
-@router.message(Command("agents"))
-async def cmd_agents(msg: Message):
-    await show_agents_page(msg, 1)
-
-
-async def show_agents_page(source, page: int):
-    """Show agents list for a specific page."""
-    if hasattr(source, 'from_user') and source.from_user is None:
-        return
-    user_id = source.from_user.id if hasattr(source, 'from_user') else source.from_user.id
-    user = await get_user_by_telegram_id(user_id)
-    if not is_allowed_to_create(user):
-        reply = "Anda tidak memiliki izin melihat agents."
-        if hasattr(source, 'reply'):
-            await source.reply(reply)
-        else:
-            await _safe_edit_or_fallback(source, reply)
-        return
-
-    limit = 5
-    offset = (page - 1) * limit
-    agents = await list_agents(limit=limit, offset=offset)
-    total_agents = await count_agents()
-
-    if total_agents == 0:
-        reply = "Belum ada agent terdaftar. Tambah dengan /add_agent <name> <base_url> <api_key>"
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Kembali", callback_data="back_to_main")]])
-        if hasattr(source, 'reply'):
-            await source.reply(reply, reply_markup=kb)
-        else:
-            await _safe_edit_or_fallback(source, reply, reply_markup=kb)
-        return
-
-    # Calculate totals
-    all_agents = await list_agents()  # Get all for status calculation
-    active_count = 0
-    inactive_count = 0
-    for a in all_agents:
-        last_seen = a.get('last_seen')
-        if last_seen and isinstance(last_seen, str):
-            try:
-                last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
-                if last_seen_dt.tzinfo is None:
-                    last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - last_seen_dt < timedelta(minutes=10):
-                    active_count += 1
-                else:
-                    inactive_count += 1
-            except (ValueError, AttributeError):
-                inactive_count += 1
-        else:
-            inactive_count += 1
-
-    text = (
-        "🤖 Daftar Agent\n\n"
-        f"🟢 Total Agent Aktif: {active_count}\n"
-        f"🔴 Total Agent Mati: {inactive_count}\n"
-        f"📊 Total Agent: {total_agents}\n\n"
-    )
-
-    kb_rows = []
-    for a in agents:
-        # Recalculate status per agent
-        last_seen = a.get('last_seen')
-        status = "🔴"
-        if last_seen and isinstance(last_seen, str):
-            try:
-                last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
-                if last_seen_dt.tzinfo is None:
-                    last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - last_seen_dt < timedelta(minutes=10):
-                    status = "🟢"
-            except (ValueError, AttributeError):
-                pass
-
-        hostname = a.get('hostname') or "N/A"
-        ip_address = a.get('ip_address') or "N/A"
-        os_type = a.get('os_type') or "Unknown"
-        version = a.get('version') or "v1.0"
-
-        text += (
-            f"{status} <b>{a['name']}</b>\n"
-            f"   ├ Hostname: {hostname}\n"
-            f"   ├ IP Address Agent: {ip_address}\n"
-            f"   ├ OS Type : {os_type}\n"
-            f"   └ Versi : {version}\n\n"
-        )
-
-        kb_rows.append([
-            InlineKeyboardButton(text=f"🔄 Reinstall {a['name']}", callback_data=f"reinstall_agent:{a['id']}"),
-            InlineKeyboardButton(text=f"🗑️ Remove {a['name']}", callback_data=f"remove_agent:{a['id']}")
-        ])
-
-    # Pagination buttons
-    nav_buttons = []
-    if page > 1:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Previous", callback_data=f"agents_page:{page-1}"))
-    if offset + limit < total_agents:
-        nav_buttons.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"agents_page:{page+1}"))
-    nav_buttons.append(InlineKeyboardButton(text="🔄 Refresh", callback_data=f"agents_page:{page}"))
-    nav_buttons.append(InlineKeyboardButton(text="🏠 Kembali", callback_data="back_to_main"))
-
-    kb_rows.append(nav_buttons)
-    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-
-    # Always use edit for callback queries (refresh), reply for new messages
-    if isinstance(source, CallbackQuery):
-        # For callback queries, directly edit the message
-        from aiogram.types import Message as AiMessage
-        if isinstance(source.message, AiMessage):
-            try:
-                await source.message.edit_text(text, reply_markup=kb, parse_mode='HTML')
-            except Exception as e:
-                # If edit fails for any reason, just answer the callback
-                logger.debug("Failed to edit message for callback %s: %s", source.data, e)
-                await source.answer("Gagal memperbarui pesan")
-        else:
-            await source.answer("Pesan tidak dapat diedit")
-    elif hasattr(source, 'reply'):
-        await source.reply(text, reply_markup=kb, parse_mode='HTML')
-    else:
-        await _safe_edit_or_fallback(source, text, reply_markup=kb, parse_mode='HTML')
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('agents_page:'))
-async def cb_agents_page(c: CallbackQuery):
-    parts = c.data.split(':')
-    if len(parts) < 2:
-        await c.answer("Data tidak valid")
-        return
-    try:
-        page = int(parts[1])
-    except ValueError:
-        await c.answer("Page tidak valid")
-        return
-    await show_agents_page(c, page)
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('reinstall_agent:'))
-async def cb_reinstall_agent(c: CallbackQuery):
-    parts = c.data.split(':')
-    if len(parts) < 2:
-        await c.answer("Data tidak valid")
-        return
-    agent_id = int(parts[1])
-    # Placeholder for reinstall logic
-    await _safe_edit_or_fallback(c, f"🔄 Fitur reinstall agent {agent_id} belum diimplementasi. Agent perlu di-restart manual atau update konfigurasi.")
-    await c.answer()
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('remove_agent:'))
-async def cb_remove_agent(c: CallbackQuery):
-    parts = c.data.split(':')
-    if len(parts) < 2:
-        await c.answer("Data tidak valid")
-        return
-    agent_id = int(parts[1])
-
-    # Get agent info for confirmation message
-    agent = await get_agent(agent_id)
-    if not agent:
-        await _safe_edit_or_fallback(c, "❌ Agent tidak ditemukan.")
-        await c.answer()
-        return
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Ya, Hapus Agent", callback_data=f"confirm_remove_agent:{agent_id}"),
-         InlineKeyboardButton(text="❌ Batal", callback_data="agents_page:1")]
-    ])
-    await _safe_edit_or_fallback(c, f"Apakah Anda yakin ingin menghapus agent <b>{agent['name']}</b>?\n\n⚠️ Tindakan ini tidak dapat dibatalkan.", reply_markup=kb, parse_mode="HTML")
-    await c.answer()
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith('confirm_remove_agent:'))
-async def cb_confirm_remove_agent(c: CallbackQuery):
-    parts = c.data.split(':')
-    if len(parts) < 2:
-        await c.answer("Data tidak valid")
-        return
-    agent_id = int(parts[1])
-
-    try:
-        # Get agent name before deletion for confirmation message
-        agent = await get_agent(agent_id)
-        agent_name = agent['name'] if agent else f"ID {agent_id}"
-
-        await remove_agent(agent_id)
-        # After successful removal, show updated agents list
-        await show_agents_page(c, 1)
-        await c.answer(f"Agent {agent_name} berhasil dihapus")
-    except Exception as e:
-        logger.exception("Failed to remove agent %s: %s", agent_id, e)
-        await _safe_edit_or_fallback(c, f"❌ Gagal menghapus agent: {e}")
-        await c.answer()
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('start_meeting:'))
@@ -1278,7 +994,7 @@ async def cmd_help(msg: Message):
             "<b>Perintah Admin (khusus Owner/Admin):</b>\n"
             "<code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
             "<code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
-            "<code>/add_agent &lt;name&gt;</code> - Tambahkan agent baru untuk remote control\n"
+            "<code>/all_users</code> - Lihat semua user dengan pagination\n"
             "<code>/agents</code> - Kelola agent (reinstall, remove, refresh status)\n"
             "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus & expired)\n"
             "<code>/check_expired</code> - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
@@ -1600,29 +1316,16 @@ async def cmd_start(msg: Message):
         username = msg.from_user.username or msg.from_user.first_name or "Pengguna"
         role = (user.get('role', 'user') if user else 'user').capitalize()
         greeting_text = (
-            f"🤖 Halo, {username}! 👋\n\n"
-            f"Anda adalah <b>{role}</b> di bot ini.\n\n"
-            "Selamat datang di <b>Bot Telegram ZOOM</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
-            "Saya bisa membantu untuk:\n"
-            "🔹 Menjadwalkan rapat baru\n"
-            "🔹 Mengelola user (khusus admin)\n"
-            "🔹 Mendapatkan short URL untuk link meeting\n"
-            "🔹 Melihat daftar user pending/aktif\n\n"
-            "Untuk memulai, silakan klik tombol di bawah ini.\n\n"
-            "Jika Anda butuh bantuan, kapan saja bisa ketik /help."
+            f"🤖 <b>ZOOM TELEBOT SOC</b>\n\n"
+            f"👋 Halo, <b>{username}</b>!\n"
+            f"🎭 Role Anda: <b>{role}</b>\n\n"
+            "Selamat datang di <b>Bot Telegram ZOOM</b> untuk manajemen rapat Zoom.\n\n"
+            "Pilih kategori menu di bawah ini untuk mengakses fitur yang tersedia:"
         )
-        
-        # Get base keyboard
-        kb = user_action_buttons()
-        
-        # Add agent management button for admin/owner
-        if is_owner_or_admin(user):
-            # Convert to list to modify
-            keyboard_rows = kb.inline_keyboard.copy()
-            # Add agent button at the end
-            keyboard_rows.append([InlineKeyboardButton(text="🤖 Kelola Agent", callback_data="agents_page:1")])
-            kb = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-        
+
+        # Get main menu keyboard based on user role
+        kb = main_menu_keyboard(user.get('role', 'user'))
+
         await msg.answer(greeting_text, reply_markup=kb, parse_mode="HTML")
     elif user and user.get('status') == 'banned':
         await msg.reply("*Anda dibanned dari menggunakan bot ini.*", parse_mode="Markdown")
@@ -3358,6 +3061,259 @@ async def cb_ban_user(c: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Gagal mengirim notifikasi ke user {user_id_to_ban}: {e}")
 
+# ===== MENU NAVIGATION HANDLERS =====
+
+@router.callback_query(lambda c: c.data == 'menu_meetings')
+async def cb_menu_meetings(c: CallbackQuery):
+    """Show meetings management submenu."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_allowed_to_create(user):
+        await c.answer("Anda belum diizinkan mengakses menu ini.")
+        return
+
+    text = "📅 <b>Manajemen Meeting</b>\n\nPilih aksi yang ingin dilakukan:"
+    await _safe_edit_or_fallback(c, text, reply_markup=meetings_menu_keyboard(), parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data == 'menu_users')
+async def cb_menu_users(c: CallbackQuery):
+    """Show user management submenu (admin/owner only)."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Menu ini hanya untuk Admin/Owner.")
+        return
+
+    text = "👥 <b>Manajemen User</b>\n\nKelola user dan permission:"
+    await _safe_edit_or_fallback(c, text, reply_markup=users_menu_keyboard(), parse_mode="HTML")
+    await c.answer()
+
+
+
+
+
+@router.callback_query(lambda c: c.data == 'menu_backup')
+async def cb_menu_backup(c: CallbackQuery):
+    """Show backup and restore submenu (admin/owner only)."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Menu ini hanya untuk Admin/Owner.")
+        return
+
+    text = "💾 <b>Backup & Restore</b>\n\nKelola backup database:"
+    await _safe_edit_or_fallback(c, text, reply_markup=backup_menu_keyboard(), parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data == 'menu_shortener')
+async def cb_menu_shortener(c: CallbackQuery):
+    """Show URL shortener submenu."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_allowed_to_create(user):
+        await c.answer("Anda belum diizinkan mengakses menu ini.")
+        return
+
+    text = "🔗 <b>URL Shortener</b>\n\nBuat short URL untuk link meeting:"
+    await _safe_edit_or_fallback(c, text, reply_markup=shortener_menu_keyboard(), parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data == 'menu_info')
+async def cb_menu_info(c: CallbackQuery):
+    """Show information and help submenu."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    text = "ℹ️ <b>Informasi & Bantuan</b>\n\nPilih informasi yang dibutuhkan:"
+    await _safe_edit_or_fallback(c, text, reply_markup=info_menu_keyboard(), parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data == 'sync_meetings')
+async def cb_sync_meetings(c: CallbackQuery):
+    """Sync meetings from Zoom to database (owner only)."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    # Only owner can run sync
+    if settings.owner_id is None or c.from_user.id != settings.owner_id:
+        await c.answer("Hanya owner yang dapat menjalankan sync meetings.")
+        return
+
+    await c.answer("🔄 Memulai sinkronisasi...")
+    
+    try:
+        stats = await sync_meetings_from_zoom(zoom_client)
+        text = (
+            "✅ <b>Sinkronisasi selesai!</b>\n\n"
+            f"📊 <b>Statistik:</b>\n"
+            f"➕ Ditambahkan: {stats['added']}\n"
+            f"🔄 Diupdate: {stats['updated']}\n"
+            f"🗑️ Ditandai Dihapus: {stats['deleted']}\n"
+            f"⏰ Ditandai Expired: {stats.get('expired', 0)}\n"
+            f"❌ Error: {stats['errors']}\n\n"
+            "<i>Sistem otomatis mensinkronkan setiap 30 menit dan saat startup.</i>"
+        )
+        await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    except Exception as e:
+        logger.exception("Manual sync failed: %s", e)
+        await _safe_edit_or_fallback(c, f"❌ <b>Gagal melakukan sinkronisasi:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data == 'check_expired')
+async def cb_check_expired(c: CallbackQuery):
+    """Check and update expired meetings (owner only)."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    # Only owner can run expiry check
+    if settings.owner_id is None or c.from_user.id != settings.owner_id:
+        await c.answer("Hanya owner yang dapat menjalankan check expired meetings.")
+        return
+
+    await c.answer("🔍 Memeriksa meeting yang sudah expired...")
+
+    try:
+        stats = await update_expired_meetings()
+        text = (
+            "✅ <b>Pemeriksaan expired selesai!</b>\n\n"
+            f"📊 <b>Statistik:</b>\n"
+            f"⏰ Meeting ditandai expired: {stats['expired']}\n"
+            f"❌ Error: {stats['errors']}\n\n"
+            "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai expired.</i>"
+        )
+        await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    except Exception as e:
+        logger.exception("Manual expiry check failed: %s", e)
+        await _safe_edit_or_fallback(c, f"❌ <b>Gagal memeriksa expired meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data == 'show_help')
+async def cb_show_help(c: CallbackQuery):
+    """Show help information."""
+    help_text = """
+❓ <b>BANTUAN - ZOOM TELEBOT SOC</b>
+
+<b>📋 DAFTAR PERINTAH:</b>
+
+<b>🔹 Meeting Management:</b>
+• /meet - Buat meeting baru
+• /sync_meetings - Sync dari Zoom
+• /check_expired - Cek meeting expired
+
+<b>🔹 User Management (Admin only):</b>
+• /all_users - List semua user
+• /register_list - List user pending
+
+<b>🔹 Agent Management (Admin only):</b>
+• /agents - List semua agent
+• /all_users - Lihat semua user
+
+<b>🔹 Utility:</b>
+• /backup - Backup database
+• /restore - Restore database
+• /short - Shorten URL
+
+<b>🔹 Info:</b>
+• /help - Bantuan ini
+• /about - Tentang bot
+• /whoami - Info user Anda
+
+<b>💡 TIPS:</b>
+• Gunakan menu utama untuk navigasi mudah
+• Semua fitur tersedia via inline keyboard
+• Admin memiliki akses menu tambahan
+
+<b>📞 Support:</b> Hubungi admin jika ada masalah.
+"""
+    await _safe_edit_or_fallback(c, help_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data == 'show_about')
+async def cb_show_about(c: CallbackQuery):
+    """Show about information."""
+    about_text = """
+ℹ️ <b>TENTANG ZOOM TELEBOT SOC</b>
+
+<b>🤖 Bot Telegram untuk Zoom Meeting Management</b>
+
+<b>🎯 Fitur Utama:</b>
+• ✅ Manajemen meeting Zoom
+• ✅ Sistem user role-based
+• ✅ Remote control via agent
+• ✅ URL shortener terintegrasi
+• ✅ Backup & restore database
+• ✅ Real-time sync dengan Zoom API
+
+<b>👥 Role System:</b>
+• 👑 <b>Owner</b> - Full access semua fitur
+• 👨‍💼 <b>Admin</b> - Manajemen user & agent
+• 👤 <b>User</b> - Meeting management
+• 👤 <b>Guest</b> - Limited access
+
+<b>🔧 Tech Stack:</b>
+• Python 3.11+ dengan aiogram
+• SQLite database dengan aiosqlite
+• Zoom API Server-to-Server OAuth
+• Docker containerization
+
+<b>📊 Status:</b> Production Ready
+<b>🛡️ Security:</b> Role-based access control
+
+<i>Dikembangkan untuk Tim SOC - Security Operations Center</i>
+"""
+    await _safe_edit_or_fallback(c, about_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(lambda c: c.data == 'whoami')
+async def cb_whoami(c: CallbackQuery):
+    """Show user information: Telegram ID, Username, and Role."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    # Get user info from database
+    user = await get_user_by_telegram_id(c.from_user.id)
+    
+    telegram_id = c.from_user.id
+    username = c.from_user.username or "Tidak ada username"
+    role = (user.get('role', 'user') if user else 'user').capitalize() if user else 'Tidak terdaftar'
+    
+    info_text = f"""
+👤 <b>INFORMASI AKUN ANDA</b>
+
+🆔 <b>Telegram ID:</b> <code>{telegram_id}</code>
+👤 <b>Username:</b> @{username}
+🎭 <b>Role:</b> {role}
+
+<i>Informasi ini bersifat pribadi dan hanya ditampilkan kepada Anda.</i>
+"""
+    
+    await _safe_edit_or_fallback(c, info_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    await c.answer()
+
+
 # Generic loggers placed at end so they don't prevent specific handlers from being
 # registered earlier in this module. These log incoming commands and callback data
 # for easier debugging but do not answer/edit messages themselves.
@@ -3378,19 +3334,16 @@ async def cb_back_to_main(c: CallbackQuery):
         username = c.from_user.username or c.from_user.first_name or "Pengguna"
         role = (user.get('role', 'user') if user else 'user').capitalize()
         greeting_text = (
-            f"🤖 Halo, {username}! 👋\n\n"
-            f"Anda adalah <b>{role}</b> di bot ini.\n\n"
-            "Selamat datang di <b>Bot Telegram ZOOM</b>. Saya di sini untuk membantu Anda mengelola rapat Zoom langsung dari Telegram.\n\n"
-            "Saya bisa membantu untuk:\n"
-            "🔹 Menjadwalkan rapat baru\n"
-            "🔹 Mengelola user (khusus admin)\n"
-            "🔹 Mendapatkan short URL untuk link meeting\n"
-            "🔹 Melihat daftar user pending/aktif\n\n"
-            "Untuk memulai, silakan klik tombol di bawah ini.\n\n"
-            "Jika Anda butuh bantuan, kapan saja bisa ketik /help."
+            f"🤖 <b>ZOOM TELEBOT SOC</b>\n\n"
+            f"👋 Halo, <b>{username}</b>!\n"
+            f"🎭 Role Anda: <b>{role}</b>\n\n"
+            "Selamat datang di <b>Bot Telegram ZOOM</b> untuk manajemen rapat Zoom.\n\n"
+            "Pilih kategori menu di bawah ini untuk mengakses fitur yang tersedia:"
         )
         # Update the current message
-        await _safe_edit_or_fallback(c, greeting_text, reply_markup=user_action_buttons(), parse_mode="HTML")
+        # Update the current message with main menu
+        kb = main_menu_keyboard(user.get('role', 'user'))
+        await _safe_edit_or_fallback(c, greeting_text, reply_markup=kb, parse_mode="HTML")
     elif user and user.get('status') == 'banned':
         await _safe_edit_or_fallback(c, "*Anda dibanned dari menggunakan bot ini.*", parse_mode="Markdown")
     else:
@@ -3432,7 +3385,9 @@ async def cb_back_to_main_new(c: CallbackQuery):
             "Jika Anda butuh bantuan, kapan saja bisa ketik /help."
         )
         # Send a new message
-        await c.message.reply(greeting_text, reply_markup=user_action_buttons(), parse_mode="HTML")
+        # Send a new message with main menu
+        kb = main_menu_keyboard(user.get('role', 'user'))
+        await c.message.reply(greeting_text, reply_markup=kb, parse_mode="HTML")
     elif user and user.get('status') == 'banned':
         await c.message.reply("*Anda dibanned dari menggunakan bot ini.*", parse_mode="Markdown")
     else:
@@ -3767,7 +3722,9 @@ async def cb_back_to_main(c: CallbackQuery):
             "Jika Anda butuh bantuan, kapan saja bisa ketik /help."
         )
         # Update the current message
-        await _safe_edit_or_fallback(c, greeting_text, reply_markup=user_action_buttons(), parse_mode="HTML")
+        # Update the current message with main menu
+        kb = main_menu_keyboard(user.get('role', 'user'))
+        await _safe_edit_or_fallback(c, greeting_text, reply_markup=kb, parse_mode="HTML")
     elif user and user.get('status') == 'banned':
         await _safe_edit_or_fallback(c, "*Anda dibanned dari menggunakan bot ini.*", parse_mode="Markdown")
     else:
@@ -3809,7 +3766,9 @@ async def cb_back_to_main_new(c: CallbackQuery):
             "Jika Anda butuh bantuan, kapan saja bisa ketik /help."
         )
         # Send a new message
-        await c.message.reply(greeting_text, reply_markup=user_action_buttons(), parse_mode="HTML")
+        # Send a new message with main menu
+        kb = main_menu_keyboard(user.get('role', 'user'))
+        await c.message.reply(greeting_text, reply_markup=kb, parse_mode="HTML")
     elif user and user.get('status') == 'banned':
         await c.message.reply("*Anda dibanned dari menggunakan bot ini.*", parse_mode="Markdown")
     else:

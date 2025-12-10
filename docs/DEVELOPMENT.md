@@ -54,9 +54,9 @@ BotTelegramZoom/
 ├── config/                 # Configuration
 │   ├── __init__.py
 │   └── config.py          # Settings management
-├── api/                    # Agent API server
+├── c2/                     # C2 Framework integration
 │   ├── __init__.py
-│   └── api_server.py     # Agent polling API
+│   └── sliver_zoom_c2.py  # Sliver C2 client
 ├── shortener/             # URL shortener
 │   ├── __init__.py
 │   └── shortener.py       # Dynamic shortener
@@ -208,15 +208,13 @@ class Settings:
     new_feature_timeout: int = Field(default=30, env="NEW_FEATURE_TIMEOUT")
 ```
 
-### Menambah API Endpoint
+### Menambah C2 Integration
 ```python
-# Di api/api_server.py
-from aiohttp import web
-
-async def new_endpoint(request):
-    """New API endpoint"""
-    data = {"status": "ok", "feature": "new"}
-    return web.json_response(data)
+# Di c2/sliver_zoom_c2.py
+async def new_c2_function(agent_name: str) -> Dict[str, Any]:
+    """New C2 integration function"""
+    # Implement new C2 functionality
+    pass
 
 # Add route
 app.router.add_get('/api/new-endpoint', new_endpoint)

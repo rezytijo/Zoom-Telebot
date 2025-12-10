@@ -1,10 +1,36 @@
-# API Documentation - Zoom-Telebot SOC
+# API Documentation - DEPRECATED
 
-Dokumentasi API untuk Zoom-Telebot SOC Agent System.
+⚠️ **DEPRECATED**: This API documentation is no longer relevant.
 
-## 📖 Overview
+## Important Notice
 
-API server menyediakan endpoint untuk remote control dan monitoring bot melalui HTTP requests. API ini digunakan oleh agent system untuk mengontrol meeting Zoom secara remote.
+The Agent API functionality has been **completely replaced** by the C2 Framework.
+
+### What Changed
+- **Old System**: REST API with polling agents
+- **New System**: Sliver C2 Framework with real-time agent communication
+
+### Migration Guide
+1. **Stop using** the old API server (`api_server.py`)
+2. **Start using** Sliver C2 for agent management
+3. **Refer to** `C2_SETUP_GUIDE.md` for setup instructions
+4. **Use** `/zoom_c2` command in Telegram bot for C2 agent control
+
+### Removed Components
+- Agent API server (`api/`)
+- Polling-based agent communication
+- REST endpoints for agent management
+- `AGENT_API_PORT`, `AGENT_BASE_URL`, `AGENT_POLL_WAIT_SECONDS` settings
+
+### New Components
+- Sliver C2 server integration (`c2/`)
+- Real-time agent communication via mTLS
+- Implant-based agent deployment
+- Enhanced security and reliability
+
+---
+
+*This documentation is kept for historical reference only. All new development should use the C2 Framework.*
 
 ## 🚀 Server Configuration
 

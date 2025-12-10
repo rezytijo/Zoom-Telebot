@@ -1,23 +1,36 @@
-# Agent API Testing Guide
+# Agent API Testing Guide - DEPRECATED
 
-## 📋 Overview
-This guide provides comprehensive curl commands to test all Agent API endpoints. The system consists of two main components:
+⚠️ **DEPRECATED**: This testing guide is no longer relevant.
 
-1. **Agent API Server** - Central server for agent management (`api/agent_api.py`)
-2. **Agent Server** - Individual agent running on host machines (`agent/agent_server.py`)
+## Important Notice
 
-## 🚀 Quick Start
+The Agent API functionality has been **completely replaced** by the C2 Framework.
 
-### Using Test Scripts
-```bash
-# Linux/Mac
-./test_endpoints.sh [server_url] [api_key] [agent_url]
+### What Changed
+- **Old System**: REST API with polling agents and curl testing
+- **New System**: Sliver C2 Framework with real-time agent communication
 
-# Windows
-test_endpoints.bat [server_url] [api_key] [agent_url]
-```
+### Migration Guide
+1. **Stop using** the old API testing methods
+2. **Start using** Sliver console for agent interaction
+3. **Refer to** `C2_SETUP_GUIDE.md` for setup and testing instructions
+4. **Use** `/zoom_c2` command in Telegram bot for C2 agent control
 
-### Manual Testing
+### Removed Components
+- Agent API server testing
+- Polling-based agent communication testing
+- REST endpoint testing with curl
+- Agent server testing scripts
+
+### New Components
+- Sliver C2 console for direct agent interaction
+- Implant deployment and management
+- Real-time command execution testing
+- Enhanced security testing capabilities
+
+---
+
+*This guide is kept for historical reference only. All new testing should use the C2 Framework console and commands.*
 Use the individual curl commands below for specific endpoint testing.
 
 ---

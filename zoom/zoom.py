@@ -197,14 +197,8 @@ class ZoomClient:
             "mute_upon_entry": True,
             "waiting_room": False,
             "auto_start_ai_companion_questions": True,
+            "auto_recording": "cloud",
         }
-        # Auto-recording strategy based on Agent API availability:
-        # - Agent ENABLED: Use LOCAL recording for Agent control & flexibility
-        # - Agent DISABLED: Use CLOUD recording (requires Zoom license with cloud recording)
-        if getattr(settings, "agent_api_enabled", True):
-            payload["settings"]["auto_recording"] = "local"
-        else:
-            payload["settings"]["auto_recording"] = "cloud"
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status >= 400:

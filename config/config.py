@@ -12,6 +12,12 @@ def _to_int(s: str | None) -> int | None:
         return None
 
 
+def _to_bool(s: str | None) -> bool:
+    if not s:
+        return False
+    return s.lower() in ('true', '1', 'yes', 'on')
+
+
 def _db_path_from_database_url(database_url: str | None) -> str:
     if not database_url:
         return os.getenv("DB_PATH", "bot.db")
@@ -63,15 +69,6 @@ class Settings:
 
     # Data directory
     DATA_DIR: str = os.getenv('DATA_DIR', './data')
-
-    # Agent API server for reverse-polling agents
-    AGENT_API_PORT: int = _to_int(os.getenv('AGENT_API_PORT')) or 8767
-    # Default base URL agents may listen on (used when adding agent with no base_url)
-    # Set e.g. AGENT_BASE_URL=http://192.168.1.10:8766 in .env to specify an accessible base URL
-    AGENT_BASE_URL: str | None = os.getenv('AGENT_BASE_URL')
-    # How long (seconds) server will hold a polling /agent/poll request before returning empty list
-    # This enables light long-polling so agents receive commands as they arrive.
-    AGENT_POLL_WAIT_SECONDS: int = _to_int(os.getenv('AGENT_POLL_WAIT_SECONDS')) or 20
 
     # alternative authentication using X-Auth-Id / X-Auth-Key
     sid_id: str | None = os.getenv('SID_ID')
