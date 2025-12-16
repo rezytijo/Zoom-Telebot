@@ -37,7 +37,33 @@ TEMP_MEETINGS: dict = {}
 
 logger = logging.getLogger(__name__)
 
+
+# ==========================================
+# Helper Functions for Agent Control
+# ==========================================
+
+def _is_agent_control_enabled() -> bool:
+    """Check if agent control is enabled via ZOOM_CONTROL_MODE."""
+    return settings.zoom_control_mode.lower() == "agent"
+
+
+def _agent_api_enabled() -> bool:
+    """Check if agent API is enabled (backward compatibility wrapper)."""
+    return _is_agent_control_enabled()
+
+
+async def _agent_api_disabled_response(callback: CallbackQuery) -> None:
+    """Send response when agent API is disabled."""
+    await callback.answer(
+        "❌ Agent control is disabled (ZOOM_CONTROL_MODE != agent). "
+        "Using Zoom cloud recording instead.",
+        show_alert=True
+    )
+
+
+# ==========================================
 # FSM States
+# ==========================================
 class MeetingStates(StatesGroup):
     topic = State()
     date = State()

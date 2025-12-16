@@ -1,6 +1,12 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from typing import List, Dict
 from shortener import get_available_providers
+from config import settings
+
+
+def _is_agent_control_enabled() -> bool:
+    """Check if agent control is enabled via ZOOM_CONTROL_MODE."""
+    return settings.zoom_control_mode.lower() == "agent"
 
 
 def main_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
@@ -20,6 +26,10 @@ def main_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
 
     # Information Section
     keyboard.append([InlineKeyboardButton(text="ℹ️ Informasi & Bantuan", callback_data="menu_info")])
+
+    # Status indicator for agent control (debug info)
+    agent_status = "🟢 Agent Control ON" if _is_agent_control_enabled() else "⚫ Agent Control OFF"
+    keyboard.append([InlineKeyboardButton(text=agent_status, callback_data="noop")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
