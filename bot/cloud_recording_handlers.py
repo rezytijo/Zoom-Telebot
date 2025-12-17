@@ -239,9 +239,6 @@ async def cb_cloud_stop_record(c: CallbackQuery):
         if success:
             # Update database status
             await update_meeting_recording_status(meeting_id, 'stopped')
-            # Wait for Zoom API to update status
-            await asyncio.sleep(5)
-
             # Refresh control UI to show Start Recording + Download button
             await _refresh_control_zoom_ui(c, meeting_id)
             return
@@ -281,9 +278,6 @@ async def cb_cloud_pause_record(c: CallbackQuery):
         if success:
             # Update database status
             await update_meeting_recording_status(meeting_id, 'paused')
-            # Wait for Zoom API to update status
-            await asyncio.sleep(5)
-
             # Refresh control UI to show Resume + Stop buttons
             await _refresh_control_zoom_ui(c, meeting_id)
             return
@@ -323,9 +317,6 @@ async def cb_cloud_resume_record(c: CallbackQuery):
         if success:
             # Update database status back to recording
             await update_meeting_recording_status(meeting_id, 'recording')
-            # Wait for Zoom API to update status
-            await asyncio.sleep(5)
-
             # Refresh control UI to show Pause + Stop buttons
             await _refresh_control_zoom_ui(c, meeting_id)
             return
