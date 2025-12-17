@@ -13,6 +13,7 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
   - **Hapus Meeting**: Hapus rapat Zoom menggunakan ID-nya (`/zoom_del`).
   - **Sinkronisasi Otomatis**: Sinkronisasi daftar rapat dari Zoom secara berkala dan saat startup.
   - **Cek Kadaluwarsa**: Secara otomatis menandai rapat yang sudah lewat waktu.
+  - **Recording Control** (v2.3): Start/Stop/Pause/Resume dengan smart dual-payload start feature dan database status tracking.
 - **Manajemen User**:
   - **Sistem Peran**: `owner`, `admin`, dan `user` dengan hak akses yang berbeda.
   - **Sistem Whitelist**: Admin dapat menyetujui (`whitelisted`), menolak, atau memblokir (`banned`) pengguna baru.

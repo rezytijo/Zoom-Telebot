@@ -4,6 +4,11 @@
 
 Zoom-Telebot SOC adalah bot Telegram yang komprehensif untuk mengelola meeting Zoom, dirancang khusus untuk Tim Keamanan Siber (SOC). Bot ini terintegrasi dengan Zoom API dan menyediakan fitur-fitur advanced untuk manajemen meeting, user, dan remote control.
 
+## ⚠️ Catatan Versi Python (Windows)
+Untuk menghindari error saat install dependencies (khususnya `pydantic-core`), disarankan menggunakan **Python 3.12** pada Windows. Pada Python 3.14, `pip` dapat mencoba membangun `pydantic-core` dari source dan membutuhkan Rust toolchain.
+
+Lihat panduan lengkap di INSTALLATION.md untuk langkah setup virtualenv Python 3.12 dan alternatif jika tetap pada Python 3.14.
+
 ## 🎯 Fitur Utama
 
 ### Meeting Management

@@ -6,7 +6,7 @@ Panduan lengkap untuk menginstall dan menjalankan Zoom-Telebot SOC dengan berbag
 
 ### Sistem Requirements
 - **OS**: Windows 10/11, Linux, atau macOS
-- **Python**: 3.11 atau lebih baru
+- **Python**: 3.11 atau lebih baru (disarankan 3.12 di Windows)
 - **RAM**: Minimum 512MB (1GB recommended)
 - **Storage**: 100MB free space
 
@@ -29,6 +29,8 @@ Panduan lengkap untuk menginstall dan menjalankan Zoom-Telebot SOC dengan berbag
 
 ### Metode 1: Instalasi Langsung di PC
 
+> Catatan penting untuk Windows: Aiogram 3.x bergantung pada Pydantic v2 yang menggunakan `pydantic-core`. Pada Python 3.14, paket ini belum memiliki wheel prebuilt untuk Windows sehingga `pip` akan mencoba membangun dari source dan membutuhkan Rust toolchain. Untuk instalasi yang lancar, gunakan Python 3.12 dengan virtual environment.
+
 #### Step 1: Clone Repository
 ```bash
 git clone <repository-url>
@@ -44,6 +46,27 @@ pip install -r requirements.txt
 pipenv install
 pipenv shell
 ```
+
+#### Step 2a (Windows Recommended): Gunakan Python 3.12 Virtualenv
+```powershell
+# Buat virtual environment dengan Python 3.12
+py -3.12 -m venv .venv
+
+# Aktivasi venv
+ .\.venv\Scripts\Activate.ps1
+
+# Upgrade tooling
+python -m pip install --upgrade pip setuptools wheel
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+#### Alternatif (Jika tetap di Python 3.14): Install Rust Toolchain
+Jika Anda harus tetap menggunakan Python 3.14 di Windows, install Rust (MSVC) agar `pydantic-core` bisa ter-compile:
+1. Install Rust via rustup: https://rustup.rs/
+2. Pastikan `cargo` ada di PATH
+3. Jalankan `pip install -r requirements.txt`
 
 #### Step 3: Setup Environment
 ```bash

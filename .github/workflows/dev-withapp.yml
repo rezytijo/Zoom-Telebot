@@ -1,0 +1,56 @@
+name: Dev-WithApp
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set build tag (Dev-WithC2v.YYYY.MM.DD)
+        run: echo "TAG=Dev-WithC2v.$(date +%Y.%m.%d)" >> $GITHUB_ENV
+
+      - name: Define image name
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_REPO }}" ]; then
+            echo "::error::Missing secret DOCKERHUB_REPO (expected format: <username>/<repo>)." && exit 1
+          fi
+          echo "IMAGE=${{ secrets.DOCKERHUB_REPO }}" >> $GITHUB_ENV
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.TAG }}
+            ${{ env.IMAGE }}:dev-latest
+          labels: |
+            org.opencontainers.image.title=zoom-telebot
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.run_id }}
+
+      - name: Summary
+        run: |
+          echo "Built and pushed: ${{ env.IMAGE }}:${{ env.TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "Also tagged: ${{ env.IMAGE }}:dev-latest" >> $GITHUB_STEP_SUMMARY

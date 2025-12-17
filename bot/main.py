@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from config import settings
 from bot.handlers import router
+from bot.cloud_recording_handlers import router as cloud_recording_router
 from db import init_db, get_user_by_telegram_id, sync_meetings_from_zoom
 from bot.middleware import LoggingMiddleware
 from zoom import zoom_client
@@ -115,6 +116,8 @@ async def main():
 
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher()
+    # Include cloud recording handlers FIRST (before generic handlers)
+    dp.include_router(cloud_recording_router)
     dp.include_router(router)
 
     # Register middleware for guaranteed pre-handler logging

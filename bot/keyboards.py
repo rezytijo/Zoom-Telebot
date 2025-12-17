@@ -10,26 +10,20 @@ def _is_agent_control_enabled() -> bool:
 
 
 def main_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
-    """Main menu keyboard with all available features organized by category."""
+    """Main menu keyboard (ringkas): create, shortener, list, info; admin adds backup + agent control."""
     keyboard = []
 
-    # Meeting Management Section
-    keyboard.append([InlineKeyboardButton(text="📅 Manajemen Meeting", callback_data="menu_meetings")])
-
-    # URL Tools Section
+    # Core actions for all users
+    keyboard.append([InlineKeyboardButton(text="➕ Create Meeting!", callback_data="create_meeting")])
+    keyboard.append([InlineKeyboardButton(text="📋 List Meeting", callback_data="list_meetings")])
     keyboard.append([InlineKeyboardButton(text="🔗 URL Shortener", callback_data="menu_shortener")])
-
-    # Admin/Owner Only Sections
-    if user_role in ["admin", "owner"]:
-        keyboard.append([InlineKeyboardButton(text="👥 Manajemen User", callback_data="menu_users")])
-        keyboard.append([InlineKeyboardButton(text="💾 Backup & Restore", callback_data="menu_backup")])
-
-    # Information Section
     keyboard.append([InlineKeyboardButton(text="ℹ️ Informasi & Bantuan", callback_data="menu_info")])
 
-    # Status indicator for agent control (debug info)
-    agent_status = "🟢 Agent Control ON" if _is_agent_control_enabled() else "⚫ Agent Control OFF"
-    keyboard.append([InlineKeyboardButton(text=agent_status, callback_data="noop")])
+    # Admin/Owner extras
+    if user_role in ["admin", "owner"]:
+        keyboard.append([InlineKeyboardButton(text="💾 Backup & Restore", callback_data="menu_backup")])
+        agent_status = "🟢 Agent Control ON" if _is_agent_control_enabled() else "⚫ Agent Control OFF"
+        keyboard.append([InlineKeyboardButton(text=agent_status, callback_data="noop")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

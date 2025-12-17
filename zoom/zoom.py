@@ -190,6 +190,10 @@ class ZoomClient:
             payload["start_time"] = start_time
         payload["timezone"] = "Asia/Jakarta"
         # sensible settings per user's request
+        auto_recording_mode = "cloud"
+        if getattr(settings, "zoom_control_mode", "cloud").lower() == "agent":
+            auto_recording_mode = "local"
+
         payload["settings"] = {
             "host_video": True,
             "participant_video": True,
@@ -197,7 +201,7 @@ class ZoomClient:
             "mute_upon_entry": True,
             "waiting_room": False,
             "auto_start_ai_companion_questions": True,
-            "auto_recording": "cloud",
+            "auto_recording": auto_recording_mode,
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as resp:
@@ -338,16 +342,22 @@ class ZoomClient:
 
 
     async def get_meeting_participants(self, meeting_id: str) -> List[Dict[str, Any]]:
-        """Get list of participants in an active meeting."""
+        """Get list of participants in an active meeting.
+        
+        Uses the /live_meetings endpoint which works for live/active meetings.
+        For past meetings analytics, use /metrics/meetings/{meetingId}/participants instead.
+        """
         self.logger.info("Getting participants for meeting %s", meeting_id)
         token = await self.ensure_token()
-        url = f"{settings.zoom_audience}/v2/metrics/meetings/{meeting_id}/participants"
+        # Use /meetings endpoint with live meeting parameter for LIVE participants
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}?type=live"
         headers = {"Authorization": f"Bearer {token}"}
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    # For live meetings, participants are in the 'participants' field
                     participants = data.get('participants', [])
                     self.logger.info("Retrieved %d participants for meeting %s", len(participants), meeting_id)
                     return participants
@@ -361,9 +371,10 @@ class ZoomClient:
         """Mute all participants in an active meeting."""
         self.logger.info("Muting all participants in meeting %s", meeting_id)
         token = await self.ensure_token()
-        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/status"
+        # Use participants/status endpoint for muting all participants
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/participants/status"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        payload = {"action": "mute_all"}
+        payload = {"action": "mute"}
 
         async with aiohttp.ClientSession() as session:
             async with session.put(url, json=payload, headers=headers) as resp:
@@ -374,6 +385,93 @@ class ZoomClient:
                     text = await resp.text()
                     self.logger.error("Failed to mute all participants in meeting %s: %s - %s", meeting_id, resp.status, text)
                     return False
+
+
+    async def control_live_meeting_recording(self, meeting_id: str, action: str) -> bool:
+        """Control recording for a live meeting using live_meetings events API.
+        
+        Args:
+            meeting_id: The meeting ID
+            action: One of 'start', 'stop', 'pause', 'resume'
+        
+        Returns:
+            True if successful, False otherwise
+        
+        API Endpoint: PATCH /live_meetings/{meetingId}/events
+        """
+        self.logger.info("Controlling recording for meeting %s with action %s", meeting_id, action)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/live_meetings/{meeting_id}/events"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        
+        # Map action names to Zoom API format
+        action_map = {
+            'start': 'recording.start',
+            'stop': 'recording.stop',
+            'pause': 'recording.pause',
+            'resume': 'recording.resume'
+        }
+        
+        zoom_method = action_map.get(action, action)
+        payload = {"method": zoom_method}
+
+        # Log detailed API call information for debugging
+        self.logger.debug("=" * 80)
+        self.logger.debug("ZOOM API CALL - Recording Control")
+        self.logger.debug("=" * 80)
+        self.logger.debug("METHOD: PATCH")
+        self.logger.debug("URL: %s", url)
+        self.logger.debug("HEADERS:")
+        self.logger.debug("  Authorization: Bearer %s...%s (token length: %d)", token[:10], token[-10:], len(token))
+        self.logger.debug("  Content-Type: application/json")
+        self.logger.debug("PAYLOAD: %s", payload)
+        self.logger.debug("=" * 80)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(url, json=payload, headers=headers) as resp:
+                response_text = await resp.text()
+                
+                # Log response details
+                self.logger.debug("=" * 80)
+                self.logger.debug("ZOOM API RESPONSE")
+                self.logger.debug("=" * 80)
+                self.logger.debug("STATUS: %d", resp.status)
+                self.logger.debug("HEADERS: %s", dict(resp.headers))
+                self.logger.debug("BODY: %s", response_text)
+                self.logger.debug("=" * 80)
+                
+                if resp.status in (204, 200, 202):
+                    self.logger.info("Recording control %s successful for meeting %s", action, meeting_id)
+                    return True
+                else:
+                    self.logger.error("Failed to control recording for meeting %s: %s - %s", meeting_id, resp.status, response_text)
+                    return False
+
+
+    async def get_live_meeting_details(self, meeting_id: str) -> Optional[Dict[str, Any]]:
+        """Get live meeting details including recording status.
+        
+        Returns meeting info with recording_status field, or None if not found.
+        Uses /live_meetings/{meetingId} endpoint for real-time status.
+        """
+        self.logger.debug("Getting live meeting details for %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/live_meetings/{meeting_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.logger.debug("Live meeting %s details retrieved", meeting_id)
+                    return data
+                elif resp.status == 404:
+                    self.logger.debug("Live meeting %s not found (may not be live)", meeting_id)
+                    return None
+                else:
+                    text = await resp.text()
+                    self.logger.warning("Failed to get live meeting %s: %s - %s", meeting_id, resp.status, text)
+                    return None
 
 
 zoom_client = ZoomClient()
