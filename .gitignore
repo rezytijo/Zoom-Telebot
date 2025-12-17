@@ -193,3 +193,26 @@ handlers.allusers&registerlist.work.py
 
 # Dummy/test files
 add_dummy_users.py
+
+# Sensitive files - do NOT commit
+.env
+.env.*
+secrets.yaml
+secrets.yml
+credentials.json
+client_secret.json
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+
+# Remove AI context from repo
+context.md
+
+# Editor/IDE local settings that may contain tokens
+.vscode/settings.json
+
+# OneDrive/temp local paths
+*.one

@@ -101,3 +101,19 @@ whitelist.txt
 .vault/
 .obsidian/
 .obsidian
+
+# Sensitive files - do NOT include in docker build
+.env
+.env.*
+secrets.yaml
+secrets.yml
+credentials.json
+client_secret.json
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+context.md
+.vscode/settings.json
+.one
