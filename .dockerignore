@@ -76,9 +76,9 @@ add_dummy_users.py
 logs/
 data/
 
-# Docker
-Dockerfile*
-docker-compose*.yml
+# Docker (ignore only root-level Dockerfile & compose)
+/Dockerfile
+/docker-compose*.yml
 .dockerignore
 Makefile
 
