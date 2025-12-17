@@ -549,6 +549,11 @@ async def cb_zoom_meeting_details(c: CallbackQuery):
         text += f"⏱️ <b>Duration:</b> {details.get('duration', 'N/A')} minutes\n"
         text += f"🎥 <b>Recording:</b> {details.get('recording_enabled', False)}\n"
         text += f"🔗 <b>Join URL:</b> {details.get('join_url', 'N/A')}\n"
+        
+        # Add Start URL if available
+        start_url = details.get('start_url')
+        if start_url:
+            text += f"▶️ <b>Start URL:</b> {start_url}\n"
 
         if details.get('settings'):
             settings = details['settings']

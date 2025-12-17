@@ -6,6 +6,12 @@ Verifies that the database has all required tables and columns
 
 import asyncio
 import aiosqlite
+from pathlib import Path
+import sys
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from config import settings
 import logging
 
@@ -15,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 async def verify_schema():
     """Verify database schema is correct and up to date"""
-    logger.info("🔍 Verifying database schema...")
+    logger.info(f"🔍 Verifying database schema at: {settings.db_path}")
     
     async with aiosqlite.connect(settings.db_path) as db:
         # Check required tables
