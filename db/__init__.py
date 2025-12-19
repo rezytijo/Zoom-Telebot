@@ -44,6 +44,12 @@ from .db import (
     update_command_status,
     check_timeout_commands,
 
+    # Shortlink management
+    add_shortlink,
+    update_shortlink_status,
+    get_shortlinks_by_user,
+    get_shortlink_stats,
+
     # Backup/Restore
     backup_database,
     backup_shorteners,
@@ -97,6 +103,12 @@ __all__ = [
     "get_pending_commands",
     "update_command_status",
     "check_timeout_commands",
+
+    # Shortlink management
+    "add_shortlink",
+    "update_shortlink_status",
+    "get_shortlinks_by_user",
+    "get_shortlink_stats",
 
     # Backup/Restore
     "backup_database",

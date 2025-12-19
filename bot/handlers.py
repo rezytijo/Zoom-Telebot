@@ -2284,7 +2284,7 @@ async def cb_shorten_meeting(c: CallbackQuery, state: FSMContext):
     # Extract URL and store complete info in state
     join_url = meeting_info.get('url') if isinstance(meeting_info, dict) else meeting_info
     topic = meeting_info.get('topic', 'Meeting') if isinstance(meeting_info, dict) else 'Meeting'
-    await state.update_data(url=join_url, meeting_info=meeting_info if isinstance(meeting_info, dict) else None)
+    await state.update_data(url=join_url, meeting_info=meeting_info if isinstance(meeting_info, dict) else None, token=token)
 
     # Send new message with meeting topic and provider selection
     kb = shortener_provider_selection_buttons()
@@ -2375,9 +2375,18 @@ async def create_short_url(update_obj, state: FSMContext, provider: str, custom:
     state_data = await state.get_data()
     url = state_data.get('url')
     
+    # If URL is not in state, try to get it from TEMP_MEETINGS
+    if not url:
+        token = state_data.get('token')
+        if token:
+            meeting_info = globals().get('TEMP_MEETINGS', {}).get(token)
+            if meeting_info and isinstance(meeting_info, dict):
+                url = meeting_info.get('url')
+    
     if not url:
         if hasattr(update_obj, 'answer'):
             await update_obj.answer("URL tidak ditemukan.")
+        logger.error("create_short_url: No URL found in state or TEMP_MEETINGS")
         return
 
     # Get user ID

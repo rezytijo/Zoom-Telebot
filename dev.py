@@ -17,9 +17,9 @@ from threading import Event
 try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
-    WATCHDOG_AVAILABLE = True
+    _WATCHDOG_IMPORT_AVAILABLE = True
 except ImportError:
-    WATCHDOG_AVAILABLE = False
+    _WATCHDOG_IMPORT_AVAILABLE = False
     # Create dummy classes to avoid NameError
     class FileSystemEventHandler:
         """Dummy class when watchdog is not available."""
@@ -66,6 +66,22 @@ def find_python_executable():
 
 # Use system Python instead of whatever is in PATH (avoids Inkscape Python issues)
 PYTHON_EXE = find_python_executable()
+
+def check_watchdog_available():
+    """Check if watchdog is available in the correct Python executable."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [PYTHON_EXE, "-c", "import watchdog; print('OK')"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+WATCHDOG_AVAILABLE = _WATCHDOG_IMPORT_AVAILABLE or check_watchdog_available()
 
 # File watching configuration
 WATCH_EXTENSIONS = {'.py', '.json'}
@@ -181,8 +197,21 @@ def run_bot_with_auto_restart(debug=False):
         print("🤖 Starting bot with auto-restart...")
         os.environ.setdefault('LOG_LEVEL', 'INFO')
 
-    # Import watchdog components (already checked availability above)
-    from watchdog.observers import Observer
+    # Import watchdog components only if available in current Python
+    # If not available, try importing from the correct Python and run there
+    try:
+        from watchdog.observers import Observer
+    except ImportError:
+        # Watchdog not in current Python, need to run auto-restart in the correct Python
+        print(f"⚠️  Watchdog not available in current Python, using {PYTHON_EXE}")
+        # For now, fall back to running without auto-restart
+        print("🔄 Running without auto-restart capability")
+        cmd = [PYTHON_EXE, str(PROJECT_ROOT / 'run.py')]
+        if debug:
+            cmd.extend(['--log-level', 'DEBUG'])
+        env = os.environ.copy()
+        result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=env)
+        return result.returncode == 0
 
     # Setup file watching
     restart_event = Event()

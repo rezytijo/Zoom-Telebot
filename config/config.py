@@ -79,6 +79,10 @@ class Settings:
     # base URL used to compose final short URL (e.g. https://s.id)
     sid_short_base: str = os.getenv('SID_SHORT_BASE', 'https://s.id')
 
+    # TinyURL settings
+    tinyurl_api_key: str | None = os.getenv('TINYURL_API_KEY')
+    tinyurl_api_url: str = os.getenv('TINYURL_API_URL', 'https://api.tinyurl.com/create')
+
     # Bitly settings (if using Bitly provider)
     bitly_token: str | None = os.getenv('BITLY_TOKEN')
     bitly_api_url: str = os.getenv('BITLY_API_URL', 'https://api-ssl.bitly.com/v4/shorten')

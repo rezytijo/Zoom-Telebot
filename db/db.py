@@ -84,6 +84,14 @@ CREATE_SQL = [
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS fsm_states (
+        user_id INTEGER PRIMARY KEY,
+        state TEXT,
+        data TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 

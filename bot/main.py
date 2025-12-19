@@ -10,6 +10,7 @@ from aiogram.types import Message
 from config import settings
 from bot.handlers import router
 from bot.cloud_recording_handlers import router as cloud_recording_router
+from bot.fsm_storage import DatabaseFSMStorage
 from db import init_db, get_user_by_telegram_id, sync_meetings_from_zoom
 from bot.middleware import LoggingMiddleware
 from zoom import zoom_client
@@ -115,7 +116,7 @@ async def main():
         return
 
     bot = Bot(token=settings.bot_token)
-    dp = Dispatcher()
+    dp = Dispatcher(storage=DatabaseFSMStorage(settings.db_path))
     # Include cloud recording handlers FIRST (before generic handlers)
     dp.include_router(cloud_recording_router)
     dp.include_router(router)

@@ -53,14 +53,25 @@ class DynamicShortener:
 		self.providers = {
 			"tinyurl": {
 				"name": "TinyURL",
-				"description": "Free URL shortener",
-				"enabled": True,
-				"api_url": "https://tinyurl.com/api-create.php",
-				"method": "get",
-				"params": {"url": "{url}"},
-				"response_type": "text",
-				"success_check": "status==200",
-				"url_extract": "response.strip()"
+				"description": "Free URL shortener with API key",
+				"enabled": bool(getattr(settings, 'tinyurl_api_key', None)),
+				"api_url": getattr(settings, 'tinyurl_api_url', 'https://api.tinyurl.com/create'),
+				"method": "post",
+				"headers": {
+					"Content-Type": "application/json"
+				},
+				"body": {
+					"url": "{url}"
+				},
+				"auth": {
+					"type": "header",
+					"headers": {
+						"Authorization": f"Bearer {getattr(settings, 'tinyurl_api_key', '')}"
+					}
+				},
+				"response_type": "json",
+				"success_check": "status in (200, 201) and response.get('data', {}).get('tiny_url')",
+				"url_extract": "response.get('data', {}).get('tiny_url', '')"
 			}
 		}
 		self.default_provider = "tinyurl"
@@ -75,16 +86,25 @@ class DynamicShortener:
 		providers = {
 			"tinyurl": {
 				"name": "TinyURL",
-				"description": "Free URL shortener, no configuration needed",
-				"enabled": True,
-				"api_url": "https://tinyurl.com/api-create.php",
-				"method": "get",
-				"params": {
+				"description": "Free URL shortener with API key",
+				"enabled": bool(getattr(settings, 'tinyurl_api_key', None)),
+				"api_url": getattr(settings, 'tinyurl_api_url', 'https://api.tinyurl.com/create'),
+				"method": "post",
+				"headers": {
+					"Content-Type": "application/json"
+				},
+				"body": {
 					"url": "{url}"
 				},
-				"response_type": "text",
-				"success_check": "status==200",
-				"url_extract": "response.strip()"
+				"auth": {
+					"type": "header",
+					"headers": {
+						"Authorization": f"Bearer {getattr(settings, 'tinyurl_api_key', '')}"
+					}
+				},
+				"response_type": "json",
+				"success_check": "status in (200, 201) and response.get('data', {}).get('tiny_url')",
+				"url_extract": "response.get('data', {}).get('tiny_url', '')"
 			},
 			"sid": {
 				"name": "S.id",
@@ -243,6 +263,7 @@ class DynamicShortener:
 
 	async def _call_single_step_provider(self, provider_config: Dict[str, Any], url: str, custom: Optional[str] = None) -> str:
 		"""Single-step API call for providers that support custom alias in one request"""
+		logger.debug("_call_single_step_provider: url=%s, custom=%s", url, custom)
 		api_url = self._format_template(provider_config['api_url'], url=url, custom=custom or '')
 
 		# Build headers
@@ -272,6 +293,7 @@ class DynamicShortener:
 				from urllib.parse import urlencode
 				params = {k: self._format_template(str(v), url=url, custom=custom or '') for k, v in params_config.items()}
 				api_url += '?' + urlencode(params)
+				logger.debug("GET params: %s", params)
 
 		logger.debug("Calling %s API: %s", provider_config['name'], api_url)
 
@@ -433,6 +455,14 @@ class DynamicShortener:
 
 	async def shorten(self, url: str, provider: Optional[str] = None, custom: Optional[str] = None) -> str:
 		"""Shorten URL using specified or default provider"""
+		# Sanitize and validate URL
+		url = url.strip() if url else ""
+		if not url:
+			raise ShortenerError("URL is empty")
+		
+		if not url.startswith(('http://', 'https://')):
+			raise ShortenerError(f"Invalid URL format: {url}")
+		
 		provider_name = provider or self.default_provider
 
 		if provider_name not in self.providers:
@@ -443,7 +473,7 @@ class DynamicShortener:
 			raise ShortenerError("No available shortener providers")
 
 		provider_config = self.providers[provider_name]
-		logger.info("Shortening URL with %s", provider_config['name'])
+		logger.info("Shortening URL %s with %s", url, provider_config['name'])
 
 		try:
 			return await self._call_provider(provider_config, url, custom)
