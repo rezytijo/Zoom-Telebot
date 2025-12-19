@@ -148,7 +148,7 @@ def status_selection_buttons(telegram_id: int) -> InlineKeyboardMarkup:
 
 def list_meetings_buttons() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Refresh", callback_data="list_meetings")],
+        [InlineKeyboardButton(text="🔄 Refresh", callback_data="sync_refresh_list")],
         [InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main")],
     ])
     return kb

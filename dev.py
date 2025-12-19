@@ -28,6 +28,45 @@ except ImportError:
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+def find_python_executable():
+    """Find the correct Python executable that has the required dependencies."""
+    import subprocess
+    
+    # First, try the current sys.executable
+    try:
+        result = subprocess.run([sys.executable, "-c", "import config; print('OK')"], 
+                              capture_output=True, text=True, cwd=PROJECT_ROOT)
+        if result.returncode == 0:
+            return sys.executable
+    except Exception:
+        pass
+    
+    # If current doesn't work, try common system Python locations
+    candidates = [
+        r"C:\Users\primall\AppData\Local\Programs\Python\Python314\python.exe",
+        r"C:\Users\primall\AppData\Local\Programs\Python\Python313\python.exe", 
+        r"C:\Users\primall\AppData\Local\Programs\Python\Python312\python.exe",
+        r"C:\Python314\python.exe",
+        r"C:\Python313\python.exe",
+        r"C:\Python312\python.exe",
+    ]
+    
+    for candidate in candidates:
+        try:
+            if Path(candidate).exists():
+                result = subprocess.run([candidate, "-c", "import config; print('OK')"], 
+                                      capture_output=True, text=True, cwd=PROJECT_ROOT)
+                if result.returncode == 0:
+                    return candidate
+        except Exception:
+            continue
+    
+    # Fallback to sys.executable if nothing else works
+    return sys.executable
+
+# Use system Python instead of whatever is in PATH (avoids Inkscape Python issues)
+PYTHON_EXE = find_python_executable()
+
 # File watching configuration
 WATCH_EXTENSIONS = {'.py', '.json'}
 EXCLUDE_FILES = {'zoom_telebot.db', 'bot.db'}
@@ -88,6 +127,9 @@ class AutoRestartHandler(FileSystemEventHandler):
 def run_command(cmd, desc=""):
     """Run a command and return success status."""
     print(f"🔧 {desc}")
+    # Replace sys.executable with PYTHON_EXE if it's the first element
+    if cmd and cmd[0] == sys.executable:
+        cmd = [PYTHON_EXE] + cmd[1:]
     print(f"   Command: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, cwd=PROJECT_ROOT)
@@ -151,7 +193,7 @@ def run_bot_with_auto_restart(debug=False):
 
     def start_bot_process():
         """Start the bot process."""
-        cmd = [sys.executable, str(PROJECT_ROOT / 'run.py')]
+        cmd = [PYTHON_EXE, str(PROJECT_ROOT / 'run.py')]
         if debug:
             cmd.extend(['--log-level', 'DEBUG'])
         env = os.environ.copy()
@@ -214,7 +256,7 @@ def test_imports():
     for module in test_modules:
         try:
             result = subprocess.run(
-                [sys.executable, "-c", f"import {module}; print('{module}: OK')"],
+                [PYTHON_EXE, "-c", f"import {module}; print('{module}: OK')"],
                 cwd=PROJECT_ROOT,
                 capture_output=True,
                 text=True
@@ -236,7 +278,7 @@ def test_imports():
 def check_config():
     """Check configuration."""
     print("🔍 Checking configuration...")
-    return run_command([sys.executable, "run.py", "--check-config"], "Checking config")
+    return run_command([PYTHON_EXE, "run.py", "--check-config"], "Checking config")
 
 
 def show_help():

@@ -927,18 +927,8 @@ async def cb_stop_meeting(c: CallbackQuery, state: FSMContext):
             # Clear FSM state
             await state.clear()
             
-            text = (
-                f"✅ Meeting berhasil diakhiri (server-side).\n\n"
-                f"Meeting: <b>{topic}</b>\n"
-                f"Meeting ID: <code>{meeting_id}</code>\n\n"
-                "Meeting telah dihapus dari Zoom."
-            )
-            
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🏠 Kembali ke Daftar Meeting", callback_data="list_meetings")]
-            ])
-            
-            await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+            # After successful stop, return to meeting list
+            await _do_list_meetings(c)
         else:
             text = (
                 f"❌ Gagal mengakhiri meeting {meeting_id} via API.\n\n"
@@ -1005,7 +995,8 @@ async def cb_delete_meeting(c: CallbackQuery):
         ok = await zoom_client.delete_meeting(meeting_id)
         if ok:
             await update_meeting_status(meeting_id, 'deleted')
-            await _safe_edit_or_fallback(c, f"✅ Meeting <code>{meeting_id}</code> dihapus dari Zoom dan ditandai di DB.", parse_mode="HTML")
+            # After successful delete, return to meeting list
+            await _do_list_meetings(c)
         else:
             await _safe_edit_or_fallback(c, f"❌ Gagal menghapus meeting {meeting_id} via API.")
     except Exception as e:
@@ -1133,11 +1124,19 @@ async def edit_meeting_time(msg: Message, state: FSMContext):
         resp = await zoom_client.update_meeting(meeting_id, topic=topic, start_time=start_time_iso)
         # Update local DB
         await update_meeting_details(meeting_id, topic=topic, start_time=start_time_iso)
-        # Show success message with auto-return option
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📅 Kembali ke Daftar Meeting", callback_data="list_meetings")]
-        ])
-        await msg.reply(f"✅ Meeting berhasil diperbarui! (meeting_id={meeting_id})", reply_markup=kb)
+        # Send success message
+        await msg.reply(f"✅ Meeting berhasil diperbarui! (meeting_id={meeting_id})")
+        # After successful edit, return to meeting list by simulating callback
+        # Create a fake callback query to trigger list_meetings
+        from aiogram.types import CallbackQuery
+        fake_c = CallbackQuery(
+            id="fake",
+            from_user=msg.from_user,
+            chat_instance="fake",
+            data="list_meetings",
+            message=msg  # Use the current message
+        )
+        await cb_list_meetings(fake_c)
     except Exception as e:
         logger.exception("Failed to update meeting %s: %s", meeting_id, e)
         await msg.reply(f"❌ Gagal memperbarui meeting: {e}")
@@ -1969,6 +1968,11 @@ async def cb_list_meetings(c: CallbackQuery):
         return
 
     await c.answer("Mengambil daftar meeting...")
+    await _do_list_meetings(c)
+
+
+async def _do_list_meetings(c: CallbackQuery):
+    """Helper function to list meetings without initial answer."""
     try:
         all_meetings = await list_meetings_with_shortlinks()
         # Filter only active meetings (already filtered in query)
@@ -2114,7 +2118,7 @@ async def cb_list_meetings(c: CallbackQuery):
                 ])
 
         # add navigation / back buttons
-        kb_rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="list_meetings"), InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main")])
+        kb_rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="sync_refresh_list"), InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
         # Try to edit the message directly for refresh, if fails, don't send new message
@@ -2139,6 +2143,29 @@ async def cb_list_meetings(c: CallbackQuery):
                 await c.answer("Gagal refresh daftar meeting")
         else:
             await c.answer("Gagal mengambil daftar meeting")
+
+
+@router.callback_query(lambda c: c.data == 'sync_refresh_list')
+async def cb_sync_refresh_list(c: CallbackQuery):
+    """Sync meetings from Zoom and refresh the list."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    # Only owner can run sync
+    if settings.owner_id is None or c.from_user.id != settings.owner_id:
+        await c.answer("Hanya owner yang dapat menjalankan sync meetings.")
+        return
+
+    await c.answer("🔄 Syncing meetings dari Zoom...")
+
+    try:
+        stats = await sync_meetings_from_zoom(zoom_client)
+        # After sync, refresh the list
+        await _do_list_meetings(c)
+    except Exception as e:
+        logger.exception("Sync and refresh failed: %s", e)
+        await c.answer(f"❌ Gagal sync: {e}")
 
 
 @router.callback_query(lambda c: c.data == 'search_user')
@@ -3584,42 +3611,41 @@ async def cb_check_expired(c: CallbackQuery):
 
 @router.callback_query(lambda c: c.data == 'show_help')
 async def cb_show_help(c: CallbackQuery):
-    """Show help information."""
-    help_text = """
-❓ <b>BANTUAN - ZOOM TELEBOT SOC</b>
+    """Show help information with clickable commands."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
 
-<b>📋 DAFTAR PERINTAH:</b>
+    user = await get_user_by_telegram_id(c.from_user.id)
+    is_admin = user and is_allowed_to_create(user)
 
-<b>🔹 Meeting Management:</b>
-• /meet - Buat meeting baru
-• /sync_meetings - Sync dari Zoom
-• /check_expired - Cek meeting expired
+    help_text = "❓ <b>BANTUAN - ZOOM TELEBOT SOC</b>\n\n<b>📋 DAFTAR PERINTAH:</b>\n\n"
 
-<b>🔹 User Management (Admin only):</b>
-• /all_users - List semua user
-• /register_list - List user pending
+    help_text += "<b>🔹 Perintah Umum:</b>\n"
+    help_text += "• <code>/start</code> - Mulai bot dan tampilkan menu utama\n"
+    help_text += "• <code>/help</code> - Tampilkan bantuan ini\n"
+    help_text += "• <code>/about</code> - Tampilkan informasi tentang bot\n"
+    help_text += "• <code>/meet &lt;topic&gt; &lt;date&gt; &lt;time&gt;</code> - Buat meeting Zoom cepat\n"
+    help_text += "• <code>/zoom_del &lt;zoom_meeting_id&gt;</code> - Hapus meeting Zoom cepat\n"
+    help_text += "• <code>/whoami</code> - Tampilkan informasi akun Telegram Anda\n\n"
 
-<b>🔹 Agent Management (Admin only):</b>
-• /agents - List semua agent
-• /all_users - Lihat semua user
+    if is_admin:
+        help_text += "<b>🔹 Perintah Admin (khusus Owner/Admin):</b>\n"
+        help_text += "• <code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
+        help_text += "• <code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
+        help_text += "• <code>/agents</code> - Kelola agent (reinstall, remove, refresh status)\n"
+        help_text += "• <code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database\n"
+        help_text += "• <code>/check_expired</code> - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
+        help_text += "• <code>/backup</code> - Buat backup database dan konfigurasi shorteners\n"
+        help_text += "• <code>/restore</code> - Restore dari file backup ZIP\n\n"
 
-<b>🔹 Utility:</b>
-• /backup - Backup database
-• /restore - Restore database
-• /short - Shorten URL
+    help_text += "<b>💡 TIPS:</b>\n"
+    help_text += "• Gunakan menu utama untuk navigasi mudah\n"
+    help_text += "• Semua fitur tersedia via inline keyboard\n"
+    if is_admin:
+        help_text += "• Admin memiliki akses menu tambahan\n"
+    help_text += "\n<b>📞 Support:</b> Hubungi admin jika ada masalah."
 
-<b>🔹 Info:</b>
-• /help - Bantuan ini
-• /about - Tentang bot
-• /whoami - Info user Anda
-
-<b>💡 TIPS:</b>
-• Gunakan menu utama untuk navigasi mudah
-• Semua fitur tersedia via inline keyboard
-• Admin memiliki akses menu tambahan
-
-<b>📞 Support:</b> Hubungi admin jika ada masalah.
-"""
     await _safe_edit_or_fallback(c, help_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
     await c.answer()
 
