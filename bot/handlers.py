@@ -43,8 +43,8 @@ logger = logging.getLogger(__name__)
 # ==========================================
 
 def _is_agent_control_enabled() -> bool:
-    """Check if agent control is enabled via ZOOM_CONTROL_MODE."""
-    return settings.zoom_control_mode.lower() == "agent"
+    """Check if agent control is enabled via C2_ENABLED."""
+    return settings.c2_enabled
 
 
 def is_agent_control_enabled() -> bool:
@@ -53,14 +53,14 @@ def is_agent_control_enabled() -> bool:
 
 
 def _agent_api_enabled() -> bool:
-    """Check if agent API is enabled (backward compatibility wrapper)."""
-    return _is_agent_control_enabled()
+    """Check if agent API is enabled for recording control."""
+    return settings.agent_api_enabled
 
 
 async def _agent_api_disabled_response(callback: CallbackQuery) -> None:
     """Send response when agent API is disabled."""
     await callback.answer(
-        "❌ Agent control is disabled (ZOOM_CONTROL_MODE != agent). "
+        "❌ Agent control is disabled (C2_ENABLED=false). "
         "Using Zoom cloud recording instead.",
         show_alert=True
     )
