@@ -257,7 +257,7 @@ def run_bot_with_auto_restart(debug=False):
                 bot_process = start_bot_process()
 
     except KeyboardInterrupt:
-        print("\n⚠️  Stopping auto-restart and terminating bot...")
+        print("\n\n🛑 Bot dihentikan (Ctrl+C)")
     except Exception as e:
         print(f"\n❌ Error in auto-restart: {e}")
     finally:
@@ -271,7 +271,7 @@ def run_bot_with_auto_restart(debug=False):
                 bot_process.kill()
             except Exception:
                 pass
-        print("✅ Auto-restart stopped")
+        print("✅ Shutdown complete\n")
 
     return True
 

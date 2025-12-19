@@ -16,6 +16,7 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
   - **Recording Control** (v2.3): Start/Stop/Pause/Resume dengan smart dual-payload start feature dan database status tracking.
 - **Persistent Sessions** (v2.4): User sessions disimpan ke database - lanjut dari mana user berhenti setelah bot restart!
 - **URL Shortener** (v2.4): Multi-provider dengan TinyURL API key integration (secure, tidak web scraping)
+- **Shortener Config Migration** (v2.5): Automatic migration system untuk `shorteners.json` dengan data preservation & backup
 - **Manajemen User**:
   - **Sistem Peran**: `owner`, `admin`, dan `user` dengan hak akses yang berbeda.
   - **Sistem Whitelist**: Admin dapat menyetujui (`whitelisted`), menolak, atau memblokir (`banned`) pengguna baru.
@@ -36,11 +37,22 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
 
 Untuk informasi lebih lengkap tentang project ini, silakan baca dokumentasi berikut:
 
+### **📌 Quick Start**
+- **[🚀 START HERE](START_HERE.md)** - Entry point untuk pengguna baru
+- **[📑 DOCS INDEX](DOCS_INDEX.md)** - Navigation hub untuk semua dokumentasi
+
+### **📖 Core Documentation**
 - **[📖 Overview Project](docs/README.md)** - Deskripsi lengkap bot dan fitur-fiturnya
 - **[🚀 Panduan Instalasi](docs/INSTALLATION.md)** - Cara install dan menjalankan bot (PC langsung, Docker run, Docker Compose)
 - **[💻 Development Guide](docs/DEVELOPMENT.md)** - Panduan development, testing, dan best practices
-- **[🔌 C2 Framework Guide](C2_SETUP_GUIDE.md)** - Panduan setup dan penggunaan C2 framework untuk agent management
+- **[🏗️ Architecture Guide](docs/ARCHITECTURE.md)** - Modular architecture dan multi-developer collaboration
 - **[🤖 AI Context Reference](context.md)** - Referensi untuk AI assistant (internal use)
+
+### **🆕 Feature Documentation**
+- **[🔄 Shortener Migration Guide](docs/SHORTENER_MIGRATION.md)** - Automatic config migration system
+- **[📊 Migration Summary](docs/MIGRATION_SUMMARY.md)** - Technical implementation details
+- **[💾 Backup/Restore Fix](docs/BACKUP_RESTORE_FIX.md)** - Bug fixes dan verification
+- **[📋 Documentation Cleanup](docs/CLEANUP_REPORT.md)** - File organization report
 
 ## 🚀 Memulai
 
@@ -245,8 +257,6 @@ BotTelegramZoom/
 │   ├── README.md             # Project overview & quick start
 │   ├── INSTALLATION.md       # Detailed installation guide
 │   ├── DEVELOPMENT.md        # Development guide & best practices
-│   ├── API.md                # API documentation
-│   ├── API_TESTING_GUIDE.md  # Guide untuk testing API
 │   └── C2_SETUP_GUIDE.md     # Detailed C2 Framework setup
 │
 ├── 📂 logs/                  # Application Logs
@@ -414,6 +424,45 @@ docker compose up -d        # Docker Compose orchestration
 ```
 
 ## ✨ Recent Updates (December 2025)
+
+### Version 2.5.0 - Shortener Config Migration & Documentation Cleanup (December 19, 2025)
+
+#### 🆕 Automatic Shortener Config Migration
+- **Auto-Detection**: Deteksi otomatis saat `shorteners.json` butuh update ke struktur terbaru
+- **Data Preservation**: 100% user customizations tetap tersimpan (API keys, headers, custom providers)
+- **Automatic Backup**: Backup otomatis sebelum migrasi ke `shorteners.json.backup_TIMESTAMP`
+- **CLI Tool**: `scripts/migrate_shorteners.py` untuk manual migration dengan preview mode
+- **Interactive Demo**: `scripts/demo_migration.py` dengan 7 learning scenarios
+- **Public API**: `migrate_shortener_config()` function untuk programmatic use
+
+**Usage**:
+```bash
+# Automatic (saat bot startup)
+python run.py  # Migration berjalan otomatis jika diperlukan
+
+# Manual dengan script
+python scripts/migrate_shorteners.py --preview  # Preview changes
+python scripts/migrate_shorteners.py            # Execute migration
+
+# Interactive demo
+python scripts/demo_migration.py                # Learn about migration
+```
+
+**Benefit**: Schema updates tidak akan menghapus kustomisasi user!
+
+#### 🔧 Backup/Restore Fix
+- **Bug Fixed**: Indentation error di `cmd_backup` handler
+- **Decorator Spacing**: Proper spacing between exception handlers
+- **Verification**: Full workflow tested (backup creation, ZIP extraction, restore)
+- **Status**: ✅ All functions working correctly
+
+#### 📚 Documentation Cleanup
+- **Organized Structure**: 4 root files (essential) + 16 docs files (reference)
+- **Navigation Hub**: `DOCS_INDEX.md` untuk root, `docs/INDEX.md` untuk docs folder
+- **No Redundancy**: 0 duplicate files, clean organization
+- **Complete Guides**: 600+ lines of migration documentation
+
+---
 
 ### Version 2.4.0 - Persistent Sessions & TinyURL API Integration
 

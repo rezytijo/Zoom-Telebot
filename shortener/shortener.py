@@ -33,6 +33,12 @@ class DynamicShortener:
 				with open(config_file_to_use, 'r', encoding='utf-8') as f:
 					config = json.load(f)
 
+				# Check if migration is needed
+				config_version = config.get('version', '1.0')
+				if self._needs_migration(config_version, config):
+					logger.info("Schema migration detected. Running migration...")
+					config = self._migrate_config(config)
+
 				self.providers = config.get('providers', {})
 				self.default_provider = config.get('default_provider', 'tinyurl')
 				self.fallback_provider = config.get('fallback_provider', 'tinyurl')
@@ -77,12 +83,124 @@ class DynamicShortener:
 		self.default_provider = "tinyurl"
 		self.fallback_provider = "tinyurl"
 
-	def _create_default_config(self):
-		"""Create default shorteners.json configuration with environment variables"""
-		# Ensure data directory exists
-		os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+	def _needs_migration(self, config_version: str, config: Dict[str, Any]) -> bool:
+		"""Check if config file needs migration"""
+		# Current version
+		current_version = "2.0"
 		
-		# Build providers config with env values
+		# Check for missing required fields or old structure
+		if config_version != current_version:
+			return True
+		
+		# Check for missing providers structure
+		if 'providers' not in config:
+			return True
+		
+		# Check for new required fields in provider configs
+		for provider_name, provider_config in config.get('providers', {}).items():
+			# If old structure without certain new fields, migrate
+			if 'method' not in provider_config:
+				return True
+			if 'headers' not in provider_config and provider_name != 'example_provider':
+				return True
+		
+		return False
+
+	def _migrate_config(self, old_config: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		Migrate old shorteners.json config to new schema.
+		
+		Preserves user customizations while upgrading structure to latest version.
+		"""
+		backup_path = self.config_file + '.pre-migration-backup'
+		
+		# Create backup of original config
+		try:
+			with open(backup_path, 'w', encoding='utf-8') as f:
+				json.dump(old_config, f, indent=2, ensure_ascii=False)
+			logger.info("Backup of pre-migration config created at: %s", backup_path)
+		except Exception as e:
+			logger.warning("Failed to create pre-migration backup: %s", e)
+		
+		# Get default/new config structure
+		default_config = self._get_default_config_dict()
+		
+		# Merge old config into new structure
+		migrated_config = default_config.copy()
+		migrated_config['version'] = '2.0'
+		migrated_config['migration_source_version'] = old_config.get('version', '1.0')
+		migrated_config['default_provider'] = old_config.get('default_provider', 'tinyurl')
+		migrated_config['fallback_provider'] = old_config.get('fallback_provider', 'tinyurl')
+		
+		# Preserve and merge existing provider configs
+		old_providers = old_config.get('providers', {})
+		new_providers = migrated_config.get('providers', {})
+		
+		for provider_name, old_provider_config in old_providers.items():
+			if provider_name in new_providers:
+				# Update new provider config with old customizations
+				new_provider = new_providers[provider_name]
+				
+				# Preserve customized fields
+				if 'enabled' in old_provider_config:
+					new_provider['enabled'] = old_provider_config['enabled']
+				
+				# Preserve auth credentials
+				if 'auth' in old_provider_config:
+					new_provider['auth'] = old_provider_config['auth']
+				
+				# Preserve body customizations
+				if 'body' in old_provider_config and isinstance(old_provider_config['body'], dict):
+					new_provider['body'] = old_provider_config['body']
+				
+				# Preserve headers customizations
+				if 'headers' in old_provider_config and isinstance(old_provider_config['headers'], dict):
+					new_provider['headers'] = old_provider_config['headers']
+				
+				# Preserve API URL if customized
+				if 'api_url' in old_provider_config:
+					new_provider['api_url'] = old_provider_config['api_url']
+				
+				# Preserve method if specified
+				if 'method' in old_provider_config:
+					new_provider['method'] = old_provider_config['method']
+				
+				# Preserve response_type if specified
+				if 'response_type' in old_provider_config:
+					new_provider['response_type'] = old_provider_config['response_type']
+				
+				# For S.id provider, preserve update_endpoint if customized
+				if provider_name == 'sid' and 'update_endpoint' in old_provider_config:
+					new_provider['update_endpoint'] = old_provider_config['update_endpoint']
+				
+				# Preserve any other custom fields not in template
+				for key, value in old_provider_config.items():
+					if key not in ['name', 'description', 'api_url', 'method', 'headers', 'auth', 'body', 'response_type', 'enabled']:
+						if key not in new_provider:
+							new_provider[key] = value
+							logger.debug("Preserved custom field '%s' in provider '%s'", key, provider_name)
+			else:
+				# If old provider not in defaults, preserve it as-is (custom provider)
+				new_providers[provider_name] = old_provider_config
+				logger.info("Preserved custom provider: %s", provider_name)
+		
+		migrated_config['providers'] = new_providers
+		
+		# Save migrated config
+		try:
+			with open(self.config_file, 'w', encoding='utf-8') as f:
+				json.dump(migrated_config, f, indent=2, ensure_ascii=False)
+			logger.info("✅ Config migrated and saved successfully to: %s", self.config_file)
+			logger.info("   - Backup saved to: %s", backup_path)
+			logger.info("   - Version upgraded from %s to 2.0", old_config.get('version', '1.0'))
+		except Exception as e:
+			logger.error("Failed to save migrated config: %s", e)
+			raise
+		
+		return migrated_config
+
+	def _get_default_config_dict(self) -> Dict[str, Any]:
+		"""Get the default config structure (without saving to file)"""
 		providers = {
 			"tinyurl": {
 				"name": "TinyURL",
@@ -198,11 +316,20 @@ class DynamicShortener:
 			}
 		}
 		
-		config = {
+		return {
+			"version": "2.0",
 			"providers": providers,
 			"default_provider": "tinyurl",
 			"fallback_provider": "tinyurl"
 		}
+
+	def _create_default_config(self):
+		"""Create default shorteners.json configuration with environment variables"""
+		# Ensure data directory exists
+		os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+		
+		# Get default config structure
+		config = self._get_default_config_dict()
 		
 		# Save to file
 		try:
@@ -233,7 +360,10 @@ class DynamicShortener:
 		try:
 			# Simple evaluation with response and status variables
 			local_vars = {'response': response, 'status': status}
-			return eval(condition, {"__builtins__": {}}, local_vars)
+			result = eval(condition, {"__builtins__": {}}, local_vars)
+			logger.debug("Condition '%s' evaluated to: %s (status=%s, response type=%s)", 
+						condition, result, status, type(response).__name__)
+			return result
 		except Exception as e:
 			logger.error("Failed to evaluate condition '%s': %s", condition, e)
 			return False
@@ -296,6 +426,9 @@ class DynamicShortener:
 				logger.debug("GET params: %s", params)
 
 		logger.debug("Calling %s API: %s", provider_config['name'], api_url)
+		if request_data:
+			logger.debug("%s Request data: %s", provider_config['name'], request_data)
+		logger.debug("%s Headers: %s", provider_config['name'], {k: (v[:20] + '...' if len(str(v)) > 20 else v) for k, v in headers.items()})
 
 		async with aiohttp.ClientSession() as session:
 			try:
@@ -430,20 +563,26 @@ class DynamicShortener:
 		"""Process API response"""
 		status = resp.status
 		response_type = provider_config.get('response_type', 'text')
+		
+		logger.debug("%s Response status: %s, response_type: %s", provider_config['name'], status, response_type)
 
 		if response_type == 'json':
 			response_data = await resp.json()
+			logger.debug("%s JSON response: %s", provider_config['name'], response_data)
 		else:
 			response_data = await resp.text()
+			logger.debug("%s Text response: %s", provider_config['name'], response_data)
 
 		# Check success condition
 		success_check = provider_config.get('success_check', 'status==200')
+		logger.debug("%s Evaluating success_check: '%s'", provider_config['name'], success_check)
 		if not self._evaluate_condition(success_check, response_data, status):
 			logger.error("%s returned error %s: %s", provider_config['name'], status, response_data)
 			raise ShortenerError(f"{provider_config['name']} error {status}: {response_data}")
 
 		# Extract URL
 		url_extract = provider_config.get('url_extract', 'response')
+		logger.debug("%s Extracting URL with: '%s'", provider_config['name'], url_extract)
 		result = self._extract_url(url_extract, response_data, status)
 
 		if not result:
@@ -477,18 +616,24 @@ class DynamicShortener:
 
 		try:
 			return await self._call_provider(provider_config, url, custom)
-		except ShortenerError:
-			# Try fallback if different from current provider
-			if provider_name != self.fallback_provider and self.fallback_provider in self.providers:
-				logger.warning("Primary provider %s failed, trying fallback %s", provider_name, self.fallback_provider)
-				try:
-					fallback_config = self.providers[self.fallback_provider]
-					return await self._call_provider(fallback_config, url, custom)
-				except ShortenerError as e:
-					logger.error("Fallback provider also failed: %s", e)
-
-			# Re-raise original error
-			raise
+		except ShortenerError as primary_error:
+			logger.error("Primary provider %s failed: %s", provider_name, primary_error)
+			
+			# Try all other enabled providers as fallback
+			for alt_provider_name, alt_config in self.providers.items():
+				if alt_provider_name != provider_name and alt_config.get('enabled', True):
+					logger.warning("Trying alternative provider: %s", alt_provider_name)
+					try:
+						result = await self._call_provider(alt_config, url, custom)
+						logger.info("Successfully shortened with fallback provider: %s", alt_provider_name)
+						return result
+					except ShortenerError as e:
+						logger.warning("Alternative provider %s also failed: %s", alt_provider_name, e)
+						continue
+			
+			# All providers failed, raise the original error
+			logger.error("All shortener providers failed. Original error: %s", primary_error)
+			raise primary_error
 
 	def get_available_providers(self) -> Dict[str, str]:
 		"""Get dict of provider_id -> provider_name for UI"""
@@ -521,3 +666,46 @@ def get_available_providers() -> Dict[str, str]:
 def reload_shortener_config():
 	"""Reload shortener configuration"""
 	_shortener.reload_config()
+
+
+def migrate_shortener_config() -> bool:
+	"""
+	Manually trigger shortener configuration migration.
+	
+	This will check if the current shorteners.json needs migration to the latest schema
+	and perform the migration if needed, preserving all user customizations.
+	
+	Returns:
+		bool: True if migration was performed, False if no migration was needed
+	"""
+	try:
+		import os
+		from config import settings
+		
+		config_file = os.path.join(settings.DATA_DIR, "shorteners.json")
+		
+		if not os.path.exists(config_file):
+			logger.warning("shorteners.json not found at %s", config_file)
+			return False
+		
+		with open(config_file, 'r', encoding='utf-8') as f:
+			config = json.load(f)
+		
+		config_version = config.get('version', '1.0')
+		
+		if _shortener._needs_migration(config_version, config):
+			logger.info("🔄 Starting shortener config migration...")
+			migrated_config = _shortener._migrate_config(config)
+			logger.info("✅ Shortener config migration completed successfully!")
+			
+			# Reload the config into memory
+			_shortener._load_config()
+			
+			return True
+		else:
+			logger.info("ℹ️  Shortener config is already at the latest version (v%s)", config_version)
+			return False
+	
+	except Exception as e:
+		logger.error("❌ Failed to migrate shortener config: %s", e)
+		raise

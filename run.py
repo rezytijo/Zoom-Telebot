@@ -123,6 +123,15 @@ def check_configuration():
 
 def main():
     """Main entry point with argument parsing."""
+    import signal
+    
+    # Suppress KeyboardInterrupt traceback
+    def signal_handler(sig, frame):
+        """Handle Ctrl+C gracefully without traceback."""
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
     parser = create_parser()
     args = parser.parse_args()
 
@@ -143,8 +152,7 @@ def main():
     try:
         asyncio.run(bot_main())
     except KeyboardInterrupt:
-        print("\n🛑 Bot dihentikan oleh user (Ctrl+C)")
-        print("✅ Proses bot telah berhenti dengan aman")
+        # Silent exit on Ctrl+C - bot/main.py already handles the message
         sys.exit(0)
     except Exception as e:
         print(f"\n❌ Error sistem: {e}")

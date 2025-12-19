@@ -132,16 +132,15 @@ async def main():
         logger.info("Bot started successfully. Press Ctrl+C to stop.")
         await dp.start_polling(bot)
     except KeyboardInterrupt:
-        logger.info("Bot shutdown initiated by user (Ctrl+C)")
+        logger.info("Shutdown initiated...")
     except asyncio.CancelledError:
-        logger.info("Bot polling was cancelled")
+        pass  # Silent handling of cancellation
     except Exception as e:
         logger.error("Unexpected error during bot operation: %s", e)
         raise
     finally:
-        logger.info("Closing bot session...")
         await bot.session.close()
-        logger.info("Bot session closed. Shutdown complete.")
+        logger.info("Shutdown complete.")
 
 
 if __name__ == '__main__':

@@ -1323,6 +1323,39 @@ async def cb_pause_record(c: CallbackQuery, state: FSMContext):
 
 
 
+LAST_HELP_MESSAGE: Dict[int, int] = {}
+
+
+async def _send_help_message(chat_id: int, bot: Bot, text: str) -> None:
+    """Send help message; edit previous help in this chat to avoid duplicates."""
+    prev_id = LAST_HELP_MESSAGE.get(chat_id)
+
+    # Try editing previous help to prevent duplicate messages
+    if prev_id:
+        try:
+            await bot.edit_message_text(
+                text,
+                chat_id=chat_id,
+                message_id=prev_id,
+                reply_markup=back_to_main_buttons(),
+                parse_mode="HTML",
+            )
+            return
+        except TelegramBadRequest as e:
+            # If message is unchanged or not found, fall back to sending a new one
+            if "message is not modified" in str(e).lower():
+                return
+            # message to edit not found or too old -> send new
+
+    sent = await bot.send_message(
+        chat_id,
+        text,
+        parse_mode="HTML",
+        reply_markup=back_to_main_buttons(),
+    )
+    LAST_HELP_MESSAGE[chat_id] = sent.message_id
+
+
 @router.message(Command("help"))
 async def cmd_help(msg: Message):
     """Show available commands and features."""
@@ -1333,50 +1366,34 @@ async def cmd_help(msg: Message):
     user = await get_user_by_telegram_id(msg.from_user.id)
     is_admin = user and is_allowed_to_create(user)
 
-    help_text = (
-        "🤖 <b>Bot Telegram ZOOM - Bantuan</b>\n\n"
-        "<b>Perintah Umum:</b>\n"
-        "<code>/start</code> - Mulai bot dan tampilkan menu utama\n"
-        "<code>/help</code> - Tampilkan bantuan ini\n"
-        "<code>/about</code> - Tampilkan informasi tentang bot\n"
-        "<code>/meet &lt;topic&gt; &lt;date&gt; &lt;time&gt;</code> - Buat meeting Zoom cepat\n"
-        "🔹 Support batch: kirim multiple baris untuk membuat banyak meeting sekaligus\n"
-        "<code>/zoom_del &lt;zoom_meeting_id&gt;</code> - Hapus meeting Zoom cepat\n"
-        "🔹 Support batch: kirim multiple baris untuk menghapus banyak meeting sekaligus\n\n"
-        "<code>/whoami</code> - Tampilkan informasi akun Telegram Anda\n\n"
-    )
+    help_text = "❓ <b>BANTUAN - ZOOM TELEBOT SOC</b>\n\n"
+    help_text += "Klik command di bawah untuk menjalankan perintah!\n\n"
+    help_text += "<b>🔹 Perintah Umum:</b>\n"
+    help_text += "• /start - Mulai bot dan tampilkan menu utama\n"
+    help_text += "• /help - Tampilkan bantuan ini\n"
+    help_text += "• /about - Tampilkan informasi tentang bot\n"
+    help_text += "• /meet &lt;topic&gt; &lt;date&gt; &lt;time&gt; - Buat meeting Zoom cepat\n"
+    help_text += "• /zoom_del &lt;zoom_meeting_id&gt; - Hapus meeting Zoom cepat\n"
+    help_text += "• /whoami - Tampilkan informasi akun Telegram Anda\n\n"
 
     if is_admin:
-        help_text += (
-            "<b>Perintah Admin (khusus Owner/Admin):</b>\n"
-            "<code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
-            "<code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
-            "<code>/all_users</code> - Lihat semua user dengan pagination\n"
-            "<code>/agents</code> - Kelola agent (reinstall, remove, refresh status)\n"
-            "<code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database (menandai yang dihapus & expired)\n"
-            "<code>/check_expired</code> - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
-            "<code>/backup</code> - Buat backup database dan konfigurasi shorteners\n"
-            "<code>/restore</code> - Restore dari file backup ZIP\n\n"
-        )
+        help_text += "<b>🔹 Perintah Admin (khusus Owner/Admin):</b>\n"
+        help_text += "• /register_list - Lihat daftar user yang menunggu persetujuan\n"
+        help_text += "• /all_users - Kelola semua user (ubah role, status, hapus)\n"
+        help_text += "• /agents - Kelola agent (reinstall, remove, refresh status)\n"
+        help_text += "• /sync_meetings - Sinkronkan meetings dari Zoom ke database\n"
+        help_text += "• /check_expired - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
+        help_text += "• /backup - Buat backup database dan konfigurasi shorteners\n"
+        help_text += "• /restore - Restore dari file backup ZIP\n\n"
 
-    help_text += (
-        "<b>Fitur Utama:</b>\n"
-        "🔹 <b>Registrasi User:</b> User baru akan didaftarkan otomatis saat pertama kali menggunakan bot\n"
-        "🔹 <b>Buat Meeting Zoom:</b> Klik tombol 'Create Meeting' untuk membuat meeting baru dengan panduan langkah demi langkah\n"
-        "🔹 <b>Short URL:</b> Setelah meeting dibuat, dapat membuat short URL untuk link meeting\n"
-    )
-
+    help_text += "<b>💡 TIPS:</b>\n"
+    help_text += "• Gunakan menu utama untuk navigasi mudah\n"
+    help_text += "• Semua fitur tersedia via inline keyboard\n"
     if is_admin:
-        help_text += "🔹 <b>Manajemen User:</b> Admin dapat menyetujui, menolak, mengubah role/status, atau menghapus user\n"
-        help_text += "🔹 <b>Manajemen Agent:</b> Admin dapat menambahkan, melihat, dan mengelola agent untuk remote control\n\n"
-    else:
-        help_text += "\n"
+        help_text += "• Admin memiliki akses menu tambahan\n"
+    help_text += "\n<b>📞 Support:</b> Hubungi admin jika ada masalah."
 
-    help_text += (
-        "<b>Catatan:</b>\n"
-        "- Pastikan Anda sudah terdaftar dan disetujui untuk menggunakan fitur meeting\n"
-        "- Hubungi admin jika ada masalah\n"
-    )
+    await _send_help_message(msg.chat.id, msg.bot, help_text)
 
     await msg.reply(help_text, reply_markup=back_to_main_new_buttons(), parse_mode="HTML")
 
@@ -2746,27 +2763,29 @@ async def cmd_backup(msg: Message, bot: Bot):
     await msg.reply("🔄 Membuat backup database dan konfigurasi... Mohon tunggu.")
 
     try:
-          # Create backup
-          zip_path = create_backup_zip(await backup_database(), backup_shorteners())
+        # Create backup
+        zip_path = create_backup_zip(await backup_database(), backup_shorteners())
 
-          # Send the backup file
-          from aiogram.types import FSInputFile
-          backup_file = FSInputFile(zip_path)
-          await msg.reply_document(
-              document=backup_file,
-              filename=os.path.basename(zip_path),
-              caption="✅ Backup berhasil dibuat!\n\nFile berisi:\n• Database SQL dump\n• Konfigurasi shorteners\n• Metadata backup"
-          )
+        # Send the backup file
+        from aiogram.types import FSInputFile
+        backup_file = FSInputFile(zip_path)
+        await msg.reply_document(
+            document=backup_file,
+            filename=os.path.basename(zip_path),
+            caption="✅ Backup berhasil dibuat!\n\nFile berisi:\n• Database SQL dump\n• Konfigurasi shorteners\n• Metadata backup"
+        )
 
-          # Clean up after a short delay to ensure file is sent
-          import asyncio
-          await asyncio.sleep(1)  # Wait 1 second for file to be sent
-          os.unlink(zip_path)
-          logger.info("Backup sent successfully to owner")
+        # Clean up after a short delay to ensure file is sent
+        import asyncio
+        await asyncio.sleep(1)  # Wait 1 second for file to be sent
+        os.unlink(zip_path)
+        logger.info("Backup sent successfully to owner")
 
     except Exception as e:
         logger.exception("Failed to create backup: %s", e)
         await msg.reply(f"❌ Gagal membuat backup: {e}")
+
+
 @router.message(Command("restore"))
 async def cmd_restore(msg: Message, state: FSMContext):
     """Restore database and shorteners from backup file (owner/admin only)."""
@@ -3623,25 +3642,25 @@ async def cb_show_help(c: CallbackQuery):
     user = await get_user_by_telegram_id(c.from_user.id)
     is_admin = user and is_allowed_to_create(user)
 
-    help_text = "❓ <b>BANTUAN - ZOOM TELEBOT SOC</b>\n\n<b>📋 DAFTAR PERINTAH:</b>\n\n"
-
+    help_text = "❓ <b>BANTUAN - ZOOM TELEBOT SOC</b>\n\n"
+    help_text += "Klik command di bawah untuk menjalankan perintah!\n\n"
     help_text += "<b>🔹 Perintah Umum:</b>\n"
-    help_text += "• <code>/start</code> - Mulai bot dan tampilkan menu utama\n"
-    help_text += "• <code>/help</code> - Tampilkan bantuan ini\n"
-    help_text += "• <code>/about</code> - Tampilkan informasi tentang bot\n"
-    help_text += "• <code>/meet &lt;topic&gt; &lt;date&gt; &lt;time&gt;</code> - Buat meeting Zoom cepat\n"
-    help_text += "• <code>/zoom_del &lt;zoom_meeting_id&gt;</code> - Hapus meeting Zoom cepat\n"
-    help_text += "• <code>/whoami</code> - Tampilkan informasi akun Telegram Anda\n\n"
+    help_text += "• /start - Mulai bot dan tampilkan menu utama\n"
+    help_text += "• /help - Tampilkan bantuan ini\n"
+    help_text += "• /about - Tampilkan informasi tentang bot\n"
+    help_text += "• /meet &lt;topic&gt; &lt;date&gt; &lt;time&gt; - Buat meeting Zoom cepat\n"
+    help_text += "• /zoom_del &lt;zoom_meeting_id&gt; - Hapus meeting Zoom cepat\n"
+    help_text += "• /whoami - Tampilkan informasi akun Telegram Anda\n\n"
 
     if is_admin:
         help_text += "<b>🔹 Perintah Admin (khusus Owner/Admin):</b>\n"
-        help_text += "• <code>/register_list</code> - Lihat daftar user yang menunggu persetujuan\n"
-        help_text += "• <code>/all_users</code> - Kelola semua user (ubah role, status, hapus)\n"
-        help_text += "• <code>/agents</code> - Kelola agent (reinstall, remove, refresh status)\n"
-        help_text += "• <code>/sync_meetings</code> - Sinkronkan meetings dari Zoom ke database\n"
-        help_text += "• <code>/check_expired</code> - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
-        help_text += "• <code>/backup</code> - Buat backup database dan konfigurasi shorteners\n"
-        help_text += "• <code>/restore</code> - Restore dari file backup ZIP\n\n"
+        help_text += "• /register_list - Lihat daftar user yang menunggu persetujuan\n"
+        help_text += "• /all_users - Kelola semua user (ubah role, status, hapus)\n"
+        help_text += "• /agents - Kelola agent (reinstall, remove, refresh status)\n"
+        help_text += "• /sync_meetings - Sinkronkan meetings dari Zoom ke database\n"
+        help_text += "• /check_expired - Periksa dan tandai meeting yang sudah lewat waktu mulai\n"
+        help_text += "• /backup - Buat backup database dan konfigurasi shorteners\n"
+        help_text += "• /restore - Restore dari file backup ZIP\n\n"
 
     help_text += "<b>💡 TIPS:</b>\n"
     help_text += "• Gunakan menu utama untuk navigasi mudah\n"
@@ -3650,7 +3669,13 @@ async def cb_show_help(c: CallbackQuery):
         help_text += "• Admin memiliki akses menu tambahan\n"
     help_text += "\n<b>📞 Support:</b> Hubungi admin jika ada masalah."
 
-    await _safe_edit_or_fallback(c, help_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    bot = getattr(c, "bot", None) or (c.message.bot if c.message else None)
+    if bot and c.message:
+        LAST_HELP_MESSAGE[c.message.chat.id] = c.message.message_id
+        await _send_help_message(c.message.chat.id, bot, help_text)
+    else:
+        await _safe_edit_or_fallback(c, help_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    await c.answer()
     await c.answer()
 
 

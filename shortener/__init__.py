@@ -5,6 +5,7 @@ from .shortener import (
     make_short,
     get_available_providers,
     reload_shortener_config,
+    migrate_shortener_config,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "make_short",
     "get_available_providers",
     "reload_shortener_config",
+    "migrate_shortener_config",
 ]
