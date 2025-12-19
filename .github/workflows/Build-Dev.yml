@@ -67,6 +67,7 @@ jobs:
           fi
 
       - name: Trigger Portainer Stack Update
+        continue-on-error: true
         run: |
           echo "🔄 Triggering Portainer stack update via webhook..."
           WEBHOOK_URL="https://docker.primall.my.id/api/stacks/webhooks/85781723-51a0-455e-a538-c5a72cc31724"
