@@ -3542,6 +3542,69 @@ async def cb_menu_backup(c: CallbackQuery):
     await c.answer()
 
 
+@router.callback_query(lambda c: c.data == 'backup_db')
+async def cb_backup_db(c: CallbackQuery, bot: Bot):
+    """Callback handler for backup database button."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Menu ini hanya untuk Admin/Owner.")
+        return
+
+    await c.answer("Membuat backup...")
+
+    try:
+        # Create backup
+        zip_path = create_backup_zip(await backup_database(), backup_shorteners())
+
+        # Send the backup file
+        from aiogram.types import FSInputFile
+        backup_file = FSInputFile(zip_path)
+        await c.message.reply_document(
+            document=backup_file,
+            filename=os.path.basename(zip_path),
+            caption="✅ Backup berhasil dibuat!\n\nFile berisi:\n• Database SQL dump\n• Konfigurasi shorteners\n• Metadata backup"
+        )
+
+        # Clean up after sending file
+        import asyncio
+        await asyncio.sleep(1)
+        os.unlink(zip_path)
+        logger.info("Backup sent successfully to owner from callback")
+
+    except Exception as e:
+        logger.exception("Failed to create backup: %s", e)
+        await c.message.reply(f"❌ Gagal membuat backup: {e}")
+
+
+@router.callback_query(lambda c: c.data == 'restore_db')
+async def cb_restore_db(c: CallbackQuery, state: FSMContext):
+    """Callback handler for restore database button."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Menu ini hanya untuk Admin/Owner.")
+        return
+
+    await c.answer()
+
+    await c.message.reply(
+        "📦 <b>Mode Restore Backup</b>\n\n"
+        "Kirim file ZIP backup yang ingin direstore.\n\n"
+        "⚠️ <b>PERINGATAN:</b> Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
+        "Pastikan file backup valid dan dari sumber terpercaya.",
+        parse_mode="HTML"
+    )
+
+    await state.set_state(RestoreStates.waiting_for_file)
+
+
 @router.callback_query(lambda c: c.data == 'menu_shortener')
 async def cb_menu_shortener(c: CallbackQuery):
     """Show URL shortener submenu."""
@@ -3887,240 +3950,35 @@ async def cb_noop(c: CallbackQuery):
     await c.answer()
 
 
-@router.message(Command("backup"))
-async def cmd_backup(msg: Message, bot: Bot):
-    """Create backup of database and shorteners configuration (owner/admin only)."""
-    if msg.from_user is None:
-        return
-
-    # Only owner can backup
-    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
-        await msg.reply("❌ Hanya owner yang dapat membuat backup.")
-        return
-
-    await msg.reply("🔄 Membuat backup database dan konfigurasi... Mohon tunggu.")
-
+@router.message(lambda m: m.text and m.text.startswith('/'))
+async def _log_incoming_command(msg: Message):
     try:
-          # Create backup
-          zip_path = create_backup_zip(await backup_database(), backup_shorteners())
-
-          # Send the backup file
-          from aiogram.types import FSInputFile
-          backup_file = FSInputFile(zip_path)
-          await msg.reply_document(
-              document=backup_file,
-              filename=os.path.basename(zip_path),
-              caption="✅ Backup berhasil dibuat!\n\nFile berisi:\n• Database SQL dump\n• Konfigurasi shorteners\n• Metadata backup"
-          )
-
-          # Clean up after a short delay to ensure file is sent
-          import asyncio
-          await asyncio.sleep(1)  # Wait 1 second for file to be sent
-          os.unlink(zip_path)
-          logger.info("Backup sent successfully to owner")
-
-    except Exception as e:
-        logger.exception("Failed to create backup: %s", e)
-        await msg.reply(f"❌ Gagal membuat backup: {e}")
-
-@router.message(Command("restore"))
-async def cmd_restore(msg: Message, state: FSMContext):
-    """Restore database and shorteners from backup file (owner/admin only)."""
-    if msg.from_user is None:
-        return
-
-    # Only owner can restore
-    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
-        await msg.reply("❌ Hanya owner yang dapat melakukan restore.")
-        return
-
-    await msg.reply(
-        "📦 **Mode Restore Backup**\n\n"
-        "Kirim file ZIP backup yang ingin direstore.\n\n"
-        "⚠️ **PERINGATAN:** Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
-        "Pastikan file backup valid dan dari sumber terpercaya.",
-        parse_mode="Markdown"
-    )
-
-    await state.set_state(RestoreStates.waiting_for_file)
+        cmd = (msg.text or '').split()[0]
+    except Exception:
+        cmd = msg.text or '<unknown>'
+    # use DEBUG to reduce noise; middleware will provide guaranteed pre-processing logs
+    logger.debug("Processing command %s from user=%s chat_id=%s username=%s",
+                 cmd,
+                 getattr(msg.from_user, 'id', None),
+                 getattr(getattr(msg, 'chat', None), 'id', None),
+                 getattr(getattr(msg, 'from_user', None), 'username', None))
 
 
-@router.message(RestoreStates.waiting_for_file)
-async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
-    """Handle the uploaded backup file for restore."""
-    if msg.from_user is None:
-        return
-
-    # Double-check owner permission
-    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
-        await state.clear()
-        return
-
-    if not msg.document:
-        await msg.reply("❌ Silakan kirim file ZIP backup yang valid.")
-        return
-
-    # Check if it's a ZIP file
-    if not msg.document.file_name or not msg.document.file_name.lower().endswith('.zip'):
-        await msg.reply("❌ File harus berformat ZIP.")
-        return
-
-    await msg.reply("🔄 Memproses file backup... Mohon tunggu.")
-
+@router.callback_query()
+async def _log_incoming_callback(c: CallbackQuery):
     try:
-        # Download the file
-        file_info = await bot.get_file(msg.document.file_id)
-        if not file_info.file_path:
-            await msg.reply("❌ Gagal mendapatkan path file.")
-            await state.clear()
-            return
+        data = getattr(c, 'data', None)
+        user_id = getattr(c.from_user, 'id', None) if c.from_user is not None else None
+        username = getattr(c.from_user, 'username', None) if c.from_user is not None else None
+        msg_obj = getattr(c, 'message', None)
+        msg_id = getattr(msg_obj, 'message_id', None) if msg_obj is not None else None
+        chat_id = getattr(getattr(msg_obj, 'chat', None), 'id', None) if msg_obj is not None else None
+        # DEBUG level to reduce log noise; include chat id and username for richer context
+        logger.debug("Processing callback data=%s from user=%s username=%s chat_id=%s message_id=%s",
+                     data, user_id, username, chat_id, msg_id)
+    except Exception:
+        logger.exception("Failed to log incoming callback")
 
-        temp_zip = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
-        await bot.download_file(file_info.file_path, temp_zip.name)
-        temp_zip.close()
-
-        # Extract and validate backup
-        extracted_files = extract_backup_zip(temp_zip.name)
-
-        required_files = ['database_backup.sql', 'shorteners_backup.json']
-        missing_files = [f for f in required_files if f not in extracted_files]
-
-        if missing_files:
-            await msg.reply(f"❌ File backup tidak valid. File yang hilang: {', '.join(missing_files)}")
-            # Clean up
-            os.unlink(temp_zip.name)
-            for f in extracted_files.values():
-                if os.path.exists(f):
-                    os.unlink(f)
-            await state.clear()
-            return
-
-        # Perform restore
-        await msg.reply("🔄 Memulihkan database...")
-        db_stats = await restore_database(extracted_files['database_backup.sql'])
-
-        await msg.reply("🔄 Memulihkan konfigurasi shorteners...")
-        shorteners_success = restore_shorteners(extracted_files['shorteners_backup.json'])
-
-        # Clean up
-        os.unlink(temp_zip.name)
-        for f in extracted_files.values():
-            if os.path.exists(f):
-                os.unlink(f)
-
-        await state.clear()
-
-        # Send success message
-        success_msg = (
-            "✅ **Restore Berhasil!**\n\n"
-            f"📊 **Database:** {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
-            f"🔗 **Shorteners:** {'Berhasil' if shorteners_success else 'Gagal'}\n\n"
-            "⚠️ Bot akan restart untuk menerapkan perubahan."
-        )
-
-        await msg.reply(success_msg, parse_mode="Markdown")
-
-        logger.info("Restore completed successfully by owner")
-
-    except Exception as e:
-        logger.exception("Failed to restore backup: %s", e)
-        await msg.reply(f"❌ Gagal melakukan restore: {e}")
-        await state.clear()
-        await msg.reply(
-            "📦 **Mode Restore Backup**\n\n"
-            "Kirim file ZIP backup yang ingin direstore.\n\n"
-            "⚠️ **PERINGATAN:** Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
-            "Pastikan file backup valid dan dari sumber terpercaya.",
-            parse_mode="Markdown"
-    )
-
-    await state.set_state(RestoreStates.waiting_for_file)
-
-
-@router.message(RestoreStates.waiting_for_file)
-async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
-    """Handle the uploaded backup file for restore."""
-    if msg.from_user is None:
-        return
-
-    # Double-check owner permission
-    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
-        await state.clear()
-        return
-
-    if not msg.document:
-        await msg.reply("❌ Silakan kirim file ZIP backup yang valid.")
-        return
-
-    # Check if it's a ZIP file
-    if not msg.document.file_name or not msg.document.file_name.lower().endswith('.zip'):
-        await msg.reply("❌ File harus berformat ZIP.")
-        return
-
-    await msg.reply("🔄 Memproses file backup... Mohon tunggu.")
-
-    try:
-        # Download the file
-        file_info = await bot.get_file(msg.document.file_id)
-        if not file_info.file_path:
-            await msg.reply("❌ Gagal mendapatkan path file.")
-            await state.clear()
-            return
-
-        temp_zip = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
-        await bot.download_file(file_info.file_path, temp_zip.name)
-        temp_zip.close()
-
-        # Extract and validate backup
-        extracted_files = extract_backup_zip(temp_zip.name)
-
-        required_files = ['database_backup.sql', 'shorteners_backup.json']
-        missing_files = [f for f in required_files if f not in extracted_files]
-
-        if missing_files:
-            await msg.reply(f"❌ File backup tidak valid. File yang hilang: {', '.join(missing_files)}")
-            # Clean up
-            os.unlink(temp_zip.name)
-            for f in extracted_files.values():
-                if os.path.exists(f):
-                    os.unlink(f)
-            await state.clear()
-            return
-
-        # Perform restore
-        await msg.reply("🔄 Memulihkan database...")
-        db_stats = await restore_database(extracted_files['database_backup.sql'])
-
-        await msg.reply("🔄 Memulihkan konfigurasi shorteners...")
-        shorteners_success = restore_shorteners(extracted_files['shorteners_backup.json'])
-
-        # Clean up
-        os.unlink(temp_zip.name)
-        for f in extracted_files.values():
-            if os.path.exists(f):
-                os.unlink(f)
-
-        await state.clear()
-
-        # Send success message
-        success_msg = (
-            "✅ **Restore Berhasil!**\n\n"
-            f"📊 **Database:** {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
-            f"🔗 **Shorteners:** {'Berhasil' if shorteners_success else 'Gagal'}\n\n"
-            "⚠️ Bot akan restart untuk menerapkan perubahan."
-        )
-
-        await msg.reply(success_msg, parse_mode="Markdown")
-
-        logger.info("Restore completed successfully by owner")
-
-    except Exception as e:
-        logger.exception("Failed to restore backup: %s", e)
-        await msg.reply(f"❌ Gagal melakukan restore: {e}")
-        await state.clear()
-
-
-# Generic loggers placed at end so they don't prevent specific handlers from being
 # registered earlier in this module. These log incoming commands and callback data
 # for easier debugging but do not answer/edit messages themselves.
 @router.callback_query(lambda c: c.data == 'back_to_main')
@@ -4259,152 +4117,4 @@ async def shortener_receive_url(msg: Message, state: FSMContext):
     await msg.reply(text, reply_markup=shortener_provider_selection_buttons(), parse_mode="Markdown")
     await state.set_state(ShortenerStates.waiting_for_provider)
     logger.info("State set to waiting_for_provider")
-
-
-
-@router.callback_query(lambda c: c.data == 'noop')
-async def cb_noop(c: CallbackQuery):
-    """No operation callback - just answer to remove loading state."""
-    await c.answer()
-
-
-@router.message(Command("backup"))
-async def cmd_backup(msg: Message, bot: Bot):
-    """Create backup of database and shorteners configuration (owner/admin only)."""
-    if msg.from_user is None:
-        return
-
-    # Only owner can backup
-    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
-        await msg.reply("❌ Hanya owner yang dapat membuat backup.")
-        return
-
-    await msg.reply("🔄 Membuat backup database dan konfigurasi... Mohon tunggu.")
-
-    try:
-          # Create backup
-          zip_path = create_backup_zip(await backup_database(), backup_shorteners())
-
-          # Send the backup file
-          from aiogram.types import FSInputFile
-          backup_file = FSInputFile(zip_path)
-          await msg.reply_document(
-              document=backup_file,
-              filename=os.path.basename(zip_path),
-              caption="✅ Backup berhasil dibuat!\n\nFile berisi:\n• Database SQL dump\n• Konfigurasi shorteners\n• Metadata backup"
-          )
-
-          # Clean up after a short delay to ensure file is sent
-          import asyncio
-          await asyncio.sleep(1)  # Wait 1 second for file to be sent
-          os.unlink(zip_path)
-          logger.info("Backup sent successfully to owner")
-
-    except Exception as e:
-        logger.exception("Failed to create backup: %s", e)
-        await msg.reply(f"❌ Gagal membuat backup: {e}")
-
-@router.message(Command("restore"))
-async def cmd_restore(msg: Message, state: FSMContext):
-    """Restore database and shorteners from backup file (owner/admin only)."""
-    if msg.from_user is None:
-        return
-
-    # Only owner can restore
-    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
-        await msg.reply("❌ Hanya owner yang dapat melakukan restore.")
-        return
-
-    await msg.reply(
-        "📦 **Mode Restore Backup**\n\n"
-        "Kirim file ZIP backup yang ingin direstore.\n\n"
-        "⚠️ **PERINGATAN:** Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
-        "Pastikan file backup valid dan dari sumber terpercaya.",
-        parse_mode="Markdown"
-    )
-
-    await state.set_state(RestoreStates.waiting_for_file)
-
-
-@router.message(RestoreStates.waiting_for_file)
-async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
-    """Handle the uploaded backup file for restore."""
-    if msg.from_user is None:
-        return
-
-    # Double-check owner permission
-    if settings.owner_id is None or msg.from_user.id != settings.owner_id:
-        await state.clear()
-        return
-
-    if not msg.document:
-        await msg.reply("❌ Silakan kirim file ZIP backup yang valid.")
-        return
-
-    # Check if it's a ZIP file
-    if not msg.document.file_name or not msg.document.file_name.lower().endswith('.zip'):
-        await msg.reply("❌ File harus berformat ZIP.")
-        return
-
-    await msg.reply("🔄 Memproses file backup... Mohon tunggu.")
-
-    try:
-        # Download the file
-        file_info = await bot.get_file(msg.document.file_id)
-        if not file_info.file_path:
-            await msg.reply("❌ Gagal mendapatkan path file.")
-            await state.clear()
-            return
-
-        temp_zip = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
-        await bot.download_file(file_info.file_path, temp_zip.name)
-        temp_zip.close()
-
-        # Extract and validate backup
-        extracted_files = extract_backup_zip(temp_zip.name)
-
-        required_files = ['database_backup.sql', 'shorteners_backup.json']
-        missing_files = [f for f in required_files if f not in extracted_files]
-
-        if missing_files:
-            await msg.reply(f"❌ File backup tidak valid. File yang hilang: {', '.join(missing_files)}")
-            # Clean up
-            os.unlink(temp_zip.name)
-            for f in extracted_files.values():
-                if os.path.exists(f):
-                    os.unlink(f)
-            await state.clear()
-            return
-
-        # Perform restore
-        await msg.reply("🔄 Memulihkan database...")
-        db_stats = await restore_database(extracted_files['database_backup.sql'])
-
-        await msg.reply("🔄 Memulihkan konfigurasi shorteners...")
-        shorteners_success = restore_shorteners(extracted_files['shorteners_backup.json'])
-
-        # Clean up
-        os.unlink(temp_zip.name)
-        for f in extracted_files.values():
-            if os.path.exists(f):
-                os.unlink(f)
-
-        await state.clear()
-
-        # Send success message
-        success_msg = (
-            "✅ **Restore Berhasil!**\n\n"
-            f"📊 **Database:** {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
-            f"🔗 **Shorteners:** {'Berhasil' if shorteners_success else 'Gagal'}\n\n"
-            "⚠️ Bot akan restart untuk menerapkan perubahan."
-        )
-
-        await msg.reply(success_msg, parse_mode="Markdown")
-
-        logger.info("Restore completed successfully by owner")
-
-    except Exception as e:
-        logger.exception("Failed to restore backup: %s", e)
-        await msg.reply(f"❌ Gagal melakukan restore: {e}")
-        await state.clear()
 
