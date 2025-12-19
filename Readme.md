@@ -14,12 +14,14 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
   - **Sinkronisasi Otomatis**: Sinkronisasi daftar rapat dari Zoom secara berkala dan saat startup.
   - **Cek Kadaluwarsa**: Secara otomatis menandai rapat yang sudah lewat waktu.
   - **Recording Control** (v2.3): Start/Stop/Pause/Resume dengan smart dual-payload start feature dan database status tracking.
+- **Persistent Sessions** (v2.4): User sessions disimpan ke database - lanjut dari mana user berhenti setelah bot restart!
+- **URL Shortener** (v2.4): Multi-provider dengan TinyURL API key integration (secure, tidak web scraping)
 - **Manajemen User**:
   - **Sistem Peran**: `owner`, `admin`, dan `user` dengan hak akses yang berbeda.
   - **Sistem Whitelist**: Admin dapat menyetujui (`whitelisted`), menolak, atau memblokir (`banned`) pengguna baru.
   - **Pendaftaran**: Pengguna baru otomatis masuk ke dalam daftar tunggu persetujuan.
 - **URL Shortener**:
-  - **Multi-Provider**: Dukungan untuk S.id, Bitly, dan TinyURL.
+  - **Multi-Provider**: Dukungan untuk S.id, Bitly, dan TinyURL (dengan official API key).
   - **Konfigurasi Dinamis**: Tambah provider baru dengan mengedit file `shorteners.json` tanpa mengubah kode.
   - **Alias Kustom**: Mendukung alias kustom jika provider menyediakannya.
 - **Backup & Restore**:
@@ -136,6 +138,7 @@ Semua konfigurasi diatur melalui file `.env`.
 | `ZOOM_CLIENT_ID`       | Client ID dari aplikasi S2S OAuth Zoom.                                 | **Ya**     |
 | `ZOOM_CLIENT_SECRET`   | Client Secret dari aplikasi S2S OAuth Zoom.                             | **Ya**     |
 | `ZOOM_ACCOUNT_ID`      | Account ID dari akun Zoom Anda.                                         | **Ya**     |
+| `TINYURL_API_KEY`      | API key untuk TinyURL shortener service.                                 | Tidak      |
 | `DATABASE_URL`         | URL koneksi database. Default: `sqlite+aiosqlite:///./data/zoom_telebot.db` | Tidak      |
 | `SID_ID` / `SID_KEY`   | Kredensial untuk layanan shortener S.id.                                | Tidak      |
 | `BITLY_TOKEN`          | Token akses untuk layanan shortener Bitly.                              | Tidak      |
@@ -177,6 +180,7 @@ BotTelegramZoom/
 │   ├── keyboards.py          # ReplyKeyboard & InlineKeyboard definitions
 │   ├── auth.py               # Authentication & authorization system
 │   ├── middleware.py         # Middleware untuk logging, auth checks, rate limiting
+│   ├── fsm_storage.py        # Database-backed FSM storage untuk persistent sessions
 │   └── __pycache__/
 │
 ├── 📂 zoom/                   # Zoom API Integration
@@ -409,6 +413,35 @@ C2_ENABLED=true             # C2 Framework aktif
 docker compose up -d        # Docker Compose orchestration
 ```
 
-## 📄 Lisensi
+## ✨ Recent Updates (December 2025)
+
+### Version 2.4.0 - Persistent Sessions & TinyURL API Integration
+
+#### 🆕 Persistent User Sessions
+- **Database-backed FSM Storage**: User sessions sekarang disimpan di database (`fsm_states` table)
+- **Session Recovery**: Saat bot restart, user kembali ke state terakhir mereka
+- **No User Interruption**: Users tidak perlu restart dari `/start` 
+- **Implementation**: `bot/fsm_storage.py` - Custom FSM storage class
+
+**Benefit**: Users dapat melanjutkan workflow mereka tanpa kehilangan progress!
+
+#### 🆕 TinyURL API Integration  
+- **Official API Endpoint**: Menggunakan `https://api.tinyurl.com/create` dengan Bearer token
+- **API Key Authentication**: Aman disimpan di `.env` (tidak dicommit ke repo)
+- **Structured API Calls**: JSON request/response format
+- **Reliability**: Lebih robust dibanding web scraping
+
+**Configuration**:
+```bash
+TINYURL_API_KEY=1dChPWi1S8H1dTzTXbDdc95HT55dqKiUhKagsnFgMQ6BHt4D56EJcGvsrQye
+TINYURL_API_URL=https://api.tinyurl.com/create
+```
+
+#### 📊 Database Schema Updates
+- **New Table**: `fsm_states` untuk persistent session storage
+- **Columns**: `user_id`, `state`, `data`, `updated_at`
+- **Auto-migration**: Migrasi berjalan otomatis saat bot startup
+
+---
 
 Proyek ini dilisensikan di bawah [Lisensi MIT](LICENSE).
