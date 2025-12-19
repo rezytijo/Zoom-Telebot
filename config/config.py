@@ -60,6 +60,9 @@ class Settings:
     zoom_audience: str = os.getenv("ZOOM_AUDIENCE", "https://api.zoom.us")
     zoom_control_mode: str = os.getenv("ZOOM_CONTROL_MODE", "cloud")
 
+    # Timezone (e.g., Asia/Jakarta). Also respects TZ/PYTZ_TIMEZONE if TIMEZONE unset.
+    timezone: str = os.getenv("TIMEZONE") or os.getenv("TZ") or os.getenv("PYTZ_TIMEZONE", "Asia/Jakarta")
+
     # Shortener providers
     # DEFAULT_SHORTENER: 'sid', 'bitly', 'tinyurl'
     DEFAULT_SHORTENER: str = os.getenv('DEFAULT_SHORTENER', 'tinyurl')

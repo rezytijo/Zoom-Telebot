@@ -21,6 +21,7 @@ import logging
 import re
 import aiosqlite
 from datetime import datetime, date, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 import uuid
 from shortener import make_short
@@ -36,6 +37,72 @@ router = Router()
 TEMP_MEETINGS: dict = {}
 
 logger = logging.getLogger(__name__)
+
+
+# ==========================================
+# Date/Time Formatting Helpers
+# ==========================================
+
+_DAY_ID = {
+    "Monday": "Senin",
+    "Tuesday": "Selasa",
+    "Wednesday": "Rabu",
+    "Thursday": "Kamis",
+    "Friday": "Jumat",
+    "Saturday": "Sabtu",
+    "Sunday": "Minggu",
+}
+
+_MONTH_ID = {
+    "January": "Januari",
+    "February": "Februari",
+    "March": "Maret",
+    "April": "April",
+    "May": "Mei",
+    "June": "Juni",
+    "July": "Juli",
+    "August": "Agustus",
+    "September": "September",
+    "October": "Oktober",
+    "November": "November",
+    "December": "Desember",
+}
+
+
+def format_zoom_start_time(iso_str: str | None) -> str:
+    """Format Zoom start_time ISO string into Indonesian human-readable time using .env TIMEZONE.
+
+    - Uses TIMEZONE/TZ/PYTZ_TIMEZONE env via settings.timezone, default Asia/Jakarta.
+    - Input example: "2025-12-31T07:30:00Z".
+    - Falls back to raw string on parse issues.
+    """
+    if not iso_str:
+        return "N/A"
+
+    # Choose configured timezone; fall back to Asia/Jakarta if invalid
+    try:
+        target_tz = ZoneInfo(settings.timezone)
+    except Exception:
+        target_tz = timezone(timedelta(hours=7))
+
+    try:
+        cleaned = iso_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return iso_str
+
+    try:
+        local_dt = dt.astimezone(target_tz)
+    except Exception:
+        local_dt = dt
+
+    day_name = _DAY_ID.get(local_dt.strftime("%A"), local_dt.strftime("%A"))
+    month_name = _MONTH_ID.get(local_dt.strftime("%B"), local_dt.strftime("%B"))
+
+    formatted = f"{day_name}, {local_dt.day:02d} {month_name} {local_dt.year} {local_dt:%H:%M}"
+    return formatted
 
 
 # ==========================================
@@ -540,7 +607,7 @@ async def cb_zoom_meeting_details(c: CallbackQuery):
         text += f"📝 <b>Topic:</b> {details.get('topic', 'N/A')}\n"
         text += f"👤 <b>Host:</b> {details.get('host_email', 'N/A')}\n"
         text += f"📊 <b>Status:</b> {details.get('status', 'N/A')}\n"
-        text += f"🕛 <b>Start Time:</b> {details.get('start_time', 'N/A')}\n"
+        text += f"🕛 <b>Start Time:</b> {format_zoom_start_time(details.get('start_time'))}\n"
         text += f"⏱️ <b>Duration:</b> {details.get('duration', 'N/A')} minutes\n"
         text += f"🎥 <b>Recording:</b> {details.get('recording_enabled', False)}\n"
         text += f"🔗 <b>Join URL:</b> {details.get('join_url', 'N/A')}\n"
@@ -2828,13 +2895,23 @@ async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
         await msg.reply("❌ File harus berformat ZIP.")
         return
 
-    await msg.reply("🔄 Memproses file backup... Mohon tunggu.")
+    status_msg = await msg.reply("🔄 Memproses file backup... Mohon tunggu.")
+
+    async def _set_status(text: str, parse_mode: str | None = None) -> None:
+        nonlocal status_msg
+        try:
+            await status_msg.edit_text(text, parse_mode=parse_mode)
+        except Exception:
+            try:
+                status_msg = await msg.reply(text, parse_mode=parse_mode)
+            except Exception:
+                pass
 
     try:
         # Download the file
         file_info = await bot.get_file(msg.document.file_id)
         if not file_info.file_path:
-            await msg.reply("❌ Gagal mendapatkan path file.")
+            await _set_status("❌ Gagal mendapatkan path file.")
             await state.clear()
             return
 
@@ -2849,7 +2926,7 @@ async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
         missing_files = [f for f in required_files if f not in extracted_files]
 
         if missing_files:
-            await msg.reply(f"❌ File backup tidak valid. File yang hilang: {', '.join(missing_files)}")
+            await _set_status(f"❌ File backup tidak valid. File yang hilang: {', '.join(missing_files)}")
             # Clean up
             os.unlink(temp_zip.name)
             for f in extracted_files.values():
@@ -2859,10 +2936,10 @@ async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
             return
 
         # Perform restore
-        await msg.reply("🔄 Memulihkan database...")
+        await _set_status("🔄 Memulihkan database...")
         db_stats = await restore_database(extracted_files['database_backup.sql'])
 
-        await msg.reply("🔄 Memulihkan konfigurasi shorteners...")
+        await _set_status("🔄 Memulihkan konfigurasi shorteners...")
         shorteners_success = restore_shorteners(extracted_files['shorteners_backup.json'])
 
         # Clean up
@@ -2873,7 +2950,7 @@ async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
 
         await state.clear()
 
-        # Send success message
+        # Send success message via single edited status
         success_msg = (
             "✅ **Restore Berhasil!**\n\n"
             f"📊 **Database:** {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
@@ -2881,13 +2958,16 @@ async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
             "⚠️ Bot akan restart untuk menerapkan perubahan."
         )
 
-        await msg.reply(success_msg, parse_mode="Markdown")
+        await _set_status(success_msg, parse_mode="Markdown")
+
+        # Kirim konfirmasi eksplisit agar pengguna melihat pesan sukses dengan jelas
+        await _set_status("✅ Restore selesai. Backup telah diterapkan.")
 
         logger.info("Restore completed successfully by owner")
 
     except Exception as e:
         logger.exception("Failed to restore backup: %s", e)
-        await msg.reply(f"❌ Gagal melakukan restore: {e}")
+        await _set_status(f"❌ Gagal melakukan restore: {e}")
         await state.clear()
 
 
