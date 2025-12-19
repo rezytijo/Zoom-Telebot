@@ -60,10 +60,6 @@ class Settings:
     zoom_audience: str = os.getenv("ZOOM_AUDIENCE", "https://api.zoom.us")
     zoom_control_mode: str = os.getenv("ZOOM_CONTROL_MODE", "cloud")
 
-    # Agent Control Configuration
-    c2_enabled: bool = _to_bool(os.getenv("C2_ENABLED", "false"))
-    agent_api_enabled: bool = _to_bool(os.getenv("AGENT_API_ENABLED", "true"))
-
     # Shortener providers
     # DEFAULT_SHORTENER: 'sid', 'bitly', 'tinyurl'
     DEFAULT_SHORTENER: str = os.getenv('DEFAULT_SHORTENER', 'tinyurl')

@@ -43,8 +43,8 @@ logger = logging.getLogger(__name__)
 # ==========================================
 
 def _is_agent_control_enabled() -> bool:
-    """Check if agent control is enabled via C2_ENABLED."""
-    return settings.c2_enabled
+    """Check if agent control is enabled via ZOOM_CONTROL_MODE."""
+    return settings.zoom_control_mode.lower() == "agent"
 
 
 def is_agent_control_enabled() -> bool:
@@ -52,15 +52,10 @@ def is_agent_control_enabled() -> bool:
     return _is_agent_control_enabled()
 
 
-def _agent_api_enabled() -> bool:
-    """Check if agent API is enabled for recording control."""
-    return settings.agent_api_enabled
-
-
 async def _agent_api_disabled_response(callback: CallbackQuery) -> None:
     """Send response when agent API is disabled."""
     await callback.answer(
-        "❌ Agent control is disabled (C2_ENABLED=false). "
+        "❌ Agent control is disabled (ZOOM_CONTROL_MODE != agent). "
         "Using Zoom cloud recording instead.",
         show_alert=True
     )
@@ -640,13 +635,13 @@ async def cb_manage_meeting(c: CallbackQuery):
         "Pilih tindakan di bawah ini:"
     )
 
-    if not _agent_api_enabled():
+    if not _is_agent_control_enabled():
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🗑️ Delete Meeting", callback_data=f"confirm_delete:{meeting_id}" )],
             [InlineKeyboardButton(text="✏️ Edit Meeting", callback_data=f"edit_meeting:{meeting_id}" )],
             [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
         ])
-        text += "\n\n🔒 Agent API dimatikan (AGENT_API_ENABLED=false). Rekaman akan memakai auto recording Zoom."
+        text += "\n\n🔒 Agent control is disabled (ZOOM_CONTROL_MODE != agent). Recording will use Zoom auto recording."
     else:
         # Check live status to determine button text
         # First sync with Zoom API to get accurate status
@@ -672,7 +667,7 @@ async def cb_manage_meeting(c: CallbackQuery):
 @router.callback_query(lambda c: c.data and c.data.startswith('start_on_agent:'))
 async def cb_start_on_agent(c: CallbackQuery):
     """Show agent selection to start/open meeting on a specific agent host."""
-    if not _agent_api_enabled():
+    if not _is_agent_control_enabled():
         await _agent_api_disabled_response(c)
         return
     meeting_id = c.data.split(':', 1)[1]
