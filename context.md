@@ -1,8 +1,8 @@
 # Zoom-Telebot SOC - AI Context Reference
 
 **Created:** December 5, 2025
-**Last Updated:** December 19, 2025
-**Version:** 2.5.0 (Shortener Config Migration + Documentation Cleanup)
+**Last Updated:** December 28, 2025
+**Version:** 2.5.2 (Meeting Details UX Enhancement - Copyable Fields)
 
 ## 🤖 Bot Overview
 
@@ -420,6 +420,76 @@ python scripts/setup.py
 - **Agent vs API**: `api/` folder contains Agent API Server, `agent/` folder is for Agent Client Software
 
 ## 📝 Recent Changes
+
+### December 28, 2025 - Meeting Details UX Enhancement (v2.5.2)
+
+**Summary**: Meningkatkan user experience pada Meeting Details dengan membuat Meeting ID dan Passcode mudah di-copy dan lebih prominent dengan formatting bold.
+
+#### UI/UX Improvements
+- ✅ **Copyable Meeting ID**: Meeting ID kini wrapped dengan `<code>` tag untuk one-tap copy
+- ✅ **Copyable Passcode**: Passcode juga wrapped dengan `<code>` tag untuk one-tap copy
+- ✅ **Bold Formatting**: Meeting ID dan Passcode menggunakan nested `<b><code>` untuk tampilan yang lebih menonjol
+- ✅ **User Impact**: User dapat tap sekali pada Meeting ID atau Passcode untuk copy ke clipboard
+
+#### Technical Details
+**Before:**
+```python
+text += f"🆔 <b>ID:</b> {meeting_id}\n"
+text += f"🔐 <b>Passcode:</b> {passcode}\n"
+```
+
+**After:**
+```python
+text += f"🆔 <b>ID:</b> <b><code>{meeting_id}</code></b>\n"
+text += f"🔐 <b>Passcode:</b> <b><code>{passcode}</code></b>\n"
+```
+
+**Rationale**: Telegram's `<code>` tag membuat text menjadi monospace dan copyable dengan single tap. Kombinasi dengan `<b>` tag membuat field penting ini stand out secara visual.
+
+**Benefit**: 
+- Mengurangi friction saat user perlu copy Meeting ID/Passcode
+- Meningkatkan accessibility untuk workflow SOC
+- Visual hierarchy yang lebih jelas dalam Meeting Details
+
+---
+
+### December 28, 2025 - Meeting Details Passcode Enhancement (v2.5.1)
+
+**Summary**: Menambahkan tampilan Meeting Passcode pada fitur Meeting Details untuk memberikan informasi lengkap kepada user.
+
+#### Meeting Details Enhancement
+- ✅ **Passcode Display**: Tambahkan field 🔐 Passcode pada tampilan Meeting Details
+- ✅ **API Field Mapping**: Support untuk field `password` dan `encrypted_password` dari Zoom API
+- ✅ **Position**: Passcode ditampilkan setelah Duration, sebelum Recording status
+- ✅ **Fallback Value**: Display "N/A" jika passcode tidak tersedia
+- ✅ **Handler Updated**: `cb_zoom_meeting_details()` di `bot/handlers.py` (line ~619)
+
+#### Displayed Information in Meeting Details
+Informasi yang ditampilkan (urutan):
+1. 🆔 Meeting ID
+2. 📝 Topic
+3. 👤 Host Email
+4. 📊 Status
+5. 🕛 Start Time
+6. ⏱️ Duration
+7. 🔐 **Passcode** ⭐ (NEW)
+8. 🎥 Recording Status
+9. 🔗 Join URL
+10. ▶️ Start URL (if available)
+11. ⚙️ Settings (Waiting Room, Auto Mute, Auto Record)
+
+#### Technical Implementation
+```python
+# Add Passcode if available
+passcode = details.get('password') or details.get('encrypted_password', 'N/A')
+text += f"🔐 <b>Passcode:</b> {passcode}\n"
+```
+
+**Rationale**: Field `password` adalah plain text passcode, sedangkan `encrypted_password` adalah versi encrypted. Bot mengutamakan `password` dulu, fallback ke `encrypted_password` jika tidak ada.
+
+**Impact**: User kini bisa langsung melihat passcode meeting tanpa perlu ke Zoom web interface, meningkatkan efisiensi workflow.
+
+---
 
 ### December 19, 2025 - Shortener Config Migration & Documentation Cleanup
 

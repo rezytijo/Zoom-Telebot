@@ -603,7 +603,11 @@ async def cb_zoom_meeting_details(c: CallbackQuery):
         details = await zoom_client.get_meeting(meeting_id)
 
         text = "📊 <b>Meeting Details</b>\n\n"
-        text += f"🆔 <b>ID:</b> {meeting_id}\n"
+        text += f"🆔 <b>ID:</b> <b><code>{meeting_id}</code></b>\n"
+        # Add Passcode if available
+        passcode = details.get('password') or details.get('encrypted_password', 'N/A')
+        text += f"🔐 <b>Passcode:</b> <b><code>{passcode}</code></b>\n"
+
         text += f"📝 <b>Topic:</b> {details.get('topic', 'N/A')}\n"
         text += f"👤 <b>Host:</b> {details.get('host_email', 'N/A')}\n"
         text += f"📊 <b>Status:</b> {details.get('status', 'N/A')}\n"
