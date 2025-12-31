@@ -214,8 +214,8 @@ database_schema_backup*.sql
 *.backup
 
 # Local Dockerfile(s) and build artifacts - DO NOT UPLOAD
-Dockerfile
-/docker/Dockerfile
+# Dockerfile  # Commented out - need to commit for GitHub Actions
+# /docker/Dockerfile  # Commented out - need to commit for GitHub Actions
 
 # SSH keys (never commit)
 id_rsa
