@@ -2364,9 +2364,9 @@ async def cb_list_cloud_recordings(c: CallbackQuery):
             try:
                 await m.edit_text(text, parse_mode="HTML", reply_markup=kb)
             except Exception:
-                await c.answer(text, show_alert=True)
+                await c.answer()  # Silent callback acknowledgment only
         else:
-            await c.answer(text, show_alert=True)
+            await c.answer()  # Silent callback acknowledgment only
             
     except Exception as e:
         logger.exception("Failed to list cloud recordings: %s", e)
