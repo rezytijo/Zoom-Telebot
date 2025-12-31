@@ -74,13 +74,17 @@ add_dummy_users.py
 
 # Logs and data directories
 logs/
-data/
+# keep `data/` included in build context (contains committed data such as data/shorteners.json)
+
 
 # Docker (ignore only root-level Dockerfile & compose)
 /Dockerfile
+/docker/Dockerfile
 /docker-compose*.yml
 .dockerignore
 Makefile
+# Local DB backups (do not include in image)
+database_schema_backup*.sql
 
 # Documentation (keep in container for reference)
 # Test-Flow.md

@@ -187,8 +187,8 @@ Thumbs.db
 
 # Directory for log files
 /logs/
-/data/
-*.json
+# Keep project `data/` in repo (contains intentionally committed data such as data/shorteners.json)
+# Avoid ignoring all JSON files — many repo assets are JSON (keep `*.json` out of ignore)
 handlers.allusers&registerlist.work.py
 
 # Dummy/test files
@@ -207,8 +207,23 @@ client_secret.json
 *.p12
 *.pfx
 *.jks
+# Local database backups and exports (keep out of repo)
+database_schema_backup*.sql
+*.sql.gz
+*.dump
+*.backup
 
-# NOTE: context.md is INCLUDED (contains AI context documentation)
+# Local Dockerfile(s) and build artifacts - DO NOT UPLOAD
+Dockerfile
+/docker/Dockerfile
+
+# SSH keys (never commit)
+id_rsa
+id_rsa.pub
+.ssh/
+
+# AI Context - DO NOT UPLOAD TO REPO (for local development only)
+context.md
 
 # Editor/IDE local settings that may contain tokens
 .vscode/settings.json
