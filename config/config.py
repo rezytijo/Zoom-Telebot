@@ -34,6 +34,16 @@ def _db_path_from_database_url(database_url: str | None) -> str:
 
 @dataclass
 class Settings:
+    """
+    Application configuration loaded from environment variables.
+    
+    For database migrations and schema information, see:
+    docs/DATABASE_MIGRATIONS.md
+    
+    Schema Version: v2.0 (with Cloud Recording Support)
+    Latest Migration: December 31, 2025 - Added cloud_recording_data column
+    """
+    
     # Telegram
     bot_token: str | None = os.getenv("TELEGRAM_TOKEN")
     owner_id: int | None = _to_int(os.getenv("INITIAL_OWNER_ID"))

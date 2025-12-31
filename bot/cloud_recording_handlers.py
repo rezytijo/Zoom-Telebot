@@ -5,7 +5,7 @@ from aiogram import Router
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from zoom import zoom_client
 from bot.auth import is_owner_or_admin
-from db import get_user_by_telegram_id, get_meeting_recording_status, update_meeting_recording_status, list_meetings
+from db import get_user_by_telegram_id, get_meeting_recording_status, update_meeting_recording_status, list_meetings, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 import logging
 import asyncio
 
@@ -100,14 +100,6 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
             if current_recording_status == 'stopped':
                 # Show Start Recording only
                 kb_rows.append([InlineKeyboardButton(text="⏺️ Start Recording", callback_data=f"cloud_start_record:{meeting_id}")])
-                # Check if there's a completed recording available for download
-                try:
-                    recording_info = await zoom_client.get_meeting_recording_status(meeting_id)
-                    if recording_info and recording_info.get('recording_files'):
-                        # Add download link to Zoom cloud recordings
-                        kb_rows.append([InlineKeyboardButton(text="📥 Download Hasil Recording", url=f"https://zoom.us/recording")])
-                except Exception as e:
-                    logger.debug(f"Could not check recording files: {e}")
             elif current_recording_status == 'recording':
                 # Show Pause and Stop
                 kb_rows.append([
@@ -133,7 +125,8 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
 
         # Always available actions
         kb_rows.extend([
-            [InlineKeyboardButton(text="🔄️ Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
+            [InlineKeyboardButton(text="� View Cloud Recordings", callback_data=f"view_cloud_recordings:{meeting_id}")],
+            [InlineKeyboardButton(text="�🔄️ Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
             [InlineKeyboardButton(text="📊 Meeting Details", callback_data=f"zoom_meeting_details:{meeting_id}")],
             [InlineKeyboardButton(text="⬅️ Kembali ke Daftar", callback_data="list_meetings")]
         ])
@@ -333,3 +326,184 @@ async def cb_cloud_resume_record(c: CallbackQuery):
     ])
 
     await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('view_cloud_recordings:'))
+async def cb_view_cloud_recordings(c: CallbackQuery):
+    """View available cloud recording download URLs for a meeting."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+        return
+
+    meeting_id = c.data.split(':', 1)[1]
+    
+    # Show loading indicator
+    try:
+        await c.answer()  # Just acknowledge callback
+    except Exception:
+        pass
+
+    try:
+        # Try to get cached recording data first
+        cached_recording_data = await get_meeting_cloud_recording_data(meeting_id)
+        
+        # If no cached data, fetch from Zoom API and cache it
+        if not cached_recording_data:
+            logger.debug("No cached recording data, fetching from Zoom API")
+            recording_data = await zoom_client.get_cloud_recording_urls(meeting_id)
+            
+            if recording_data:
+                # Cache the data
+                from datetime import datetime
+                recording_data['last_checked'] = datetime.now().isoformat()
+                await update_meeting_cloud_recording_data(meeting_id, recording_data)
+                cached_recording_data = recording_data
+        else:
+            # Use cached data
+            recording_data = cached_recording_data
+            logger.debug("Using cached recording data for meeting %s", meeting_id)
+        
+        if not recording_data:
+            text = (
+                "📭 <b>Tidak ada Cloud Recordings</b>\n\n"
+                f"Meeting ID: <code>{meeting_id}</code>\n\n"
+                "Kemungkinan penyebab:\n"
+                "• Meeting belum direkam\n"
+                "• Recording masih diproses oleh Zoom\n"
+                "• Recording sudah dihapus\n\n"
+                "💡 <i>Cloud recording biasanya tersedia 1-2 jam setelah meeting selesai.</i>"
+            )
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"view_cloud_recordings:{meeting_id}")],
+                [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
+                [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+            ])
+            await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+            return
+
+        # Parse recording data
+        topic = recording_data.get('topic', 'No Topic')
+        start_time = recording_data.get('start_time', 'N/A')
+        duration = recording_data.get('duration', 0)
+        total_size = recording_data.get('total_size', 0)
+        recording_count = recording_data.get('recording_count', 0)
+        share_url = recording_data.get('share_url', '')
+        recording_files = recording_data.get('recording_files', [])
+        passcode = recording_data.get('password', '')  # Zoom API field name is 'password'
+        
+        # Format file size
+        def format_size(bytes_size):
+            if bytes_size < 1024:
+                return f"{bytes_size} B"
+            elif bytes_size < 1024**2:
+                return f"{bytes_size/1024:.1f} KB"
+            elif bytes_size < 1024**3:
+                return f"{bytes_size/1024**2:.1f} MB"
+            else:
+                return f"{bytes_size/1024**3:.2f} GB"
+
+        # Build message
+        text = (
+            f"📹 <b>Cloud Recordings Available</b>\n\n"
+            f"<b>{topic}</b>\n"
+            f"🆔 Meeting ID: <code>{meeting_id}</code>\n"
+            f"🕐 Start Time: {start_time}\n"
+            f"⏱️ Duration: {duration} minutes\n"
+            f"📊 Total Size: {format_size(total_size)}\n"
+            f"📁 Files: {recording_count}\n"
+        )
+        
+        # Add passcode if available
+        if passcode:
+            text += f"🔐 Passcode: <code>{passcode}</code>\n"
+        
+        text += "\n"
+
+        # Filter only MP4 files
+        kb_rows = []
+        mp4_files = [f for f in recording_files if f.get('file_type') == 'MP4']
+        
+        # Display MP4 file info with formatted start time
+        for idx, file in enumerate(mp4_files, 1):
+            file_size = file.get('file_size', 0)
+            recording_start = file.get('recording_start', '')
+            
+            text += f"🎬 <b>File {idx}: MP4</b>\n"
+            text += f"   Size: {format_size(file_size)}\n"
+            
+            # Convert recording start time to formatted date using user's timezone
+            if recording_start:
+                try:
+                    from datetime import datetime, timezone, timedelta
+                    import pytz
+                    from config import settings
+                    
+                    # Parse ISO format datetime
+                    dt = datetime.fromisoformat(recording_start.replace('Z', '+00:00'))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    
+                    # Convert to user's timezone from .env
+                    user_tz = pytz.timezone(settings.timezone)
+                    local_dt = dt.astimezone(user_tz)
+                    
+                    # Format: Hari, DD Bulan Tahun HH:MM (Indonesian day/month names)
+                    day_name = {
+                        'Monday': 'Senin', 'Tuesday': 'Selasa', 'Wednesday': 'Rabu',
+                        'Thursday': 'Kamis', 'Friday': 'Jumat', 'Saturday': 'Sabtu',
+                        'Sunday': 'Minggu'
+                    }.get(local_dt.strftime("%A"), local_dt.strftime("%A"))
+                    
+                    month_name = {
+                        'January': 'Januari', 'February': 'Februari', 'March': 'Maret',
+                        'April': 'April', 'May': 'Mei', 'June': 'Juni',
+                        'July': 'Juli', 'August': 'Agustus', 'September': 'September',
+                        'October': 'Oktober', 'November': 'November', 'December': 'Desember'
+                    }.get(local_dt.strftime("%B"), local_dt.strftime("%B"))
+                    
+                    formatted_date = f"{day_name}, {local_dt.day:02d} {month_name} {local_dt.year} {local_dt:%H:%M}"
+                    text += f"   Start: {formatted_date}\n"
+                except Exception as e:
+                    logger.debug(f"Failed to format date {recording_start}: {e}")
+                    text += f"   Start: {recording_start}\n"
+            
+            text += "\n"
+
+        # Add MP4 download buttons
+        for file in mp4_files:
+            download_url = file.get('download_url', '')
+            file_size = file.get('file_size', 0)
+            
+            if download_url:
+                kb_rows.append([
+                    InlineKeyboardButton(
+                        text=f"📥 Download MP4 ({format_size(file_size)})", 
+                        url=download_url
+                    )
+                ])
+        
+        # Add navigation buttons
+        kb_rows.extend([
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"view_cloud_recordings:{meeting_id}")],
+            [InlineKeyboardButton(text="☁️ Kembali ke Cloud Recording", callback_data="list_cloud_recordings")],
+            [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+        ])
+
+        text += "⚠️ <i>Download links expire in 24 hours</i>"
+
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+
+    except Exception as e:
+        logger.exception(f"Failed to get cloud recordings for meeting {meeting_id}")
+        text = f"❌ <b>Error getting cloud recordings</b>\n\n{str(e)}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
+            [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+        ])
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")

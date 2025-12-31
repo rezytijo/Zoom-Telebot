@@ -212,18 +212,31 @@ class ZoomClient:
                 return await resp.json()
 
     async def list_upcoming_meetings(self, user_id: Optional[str] = "me") -> Dict[str, Any]:
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         self.logger.debug("Listing upcoming meetings for user %s", user_id)
         token = await self.ensure_token()
-        today = datetime.now().date()
-        from_date = today.isoformat()
-        to_date = (today + timedelta(days=30)).isoformat()
+        
+        # Get current time in UTC, then convert to Asia/Jakarta timezone
+        now_utc = datetime.now(timezone.utc)
+        jakarta_tz = timezone(timedelta(hours=7))  # UTC+7
+        now_jakarta = now_utc.astimezone(jakarta_tz)
+        
+        # Start from 00:00:00 of current day (in Jakarta time) to show all meetings from midnight
+        today_start = now_jakarta.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Convert back to UTC for API (Zoom API expects UTC)
+        from_date = today_start.astimezone(timezone.utc).isoformat()
+        to_date = (today_start + timedelta(days=30)).astimezone(timezone.utc).isoformat()
+        
+        self.logger.debug("Meeting range: from %s to %s (Jakarta time: %s to %s)", 
+                         from_date, to_date, today_start.isoformat(), 
+                         (today_start + timedelta(days=30)).isoformat())
+        
         params = {
             'type': 'scheduled',
             'page_size': 30,
             'from': from_date,
-            'to': to_date,
-            'timezone': 'Asia/Jakarta'
+            'to': to_date
         }
         url = f"{settings.zoom_audience}/v2/users/{user_id}/meetings"
         headers = {"Authorization": f"Bearer {token}"}
@@ -471,6 +484,46 @@ class ZoomClient:
                 else:
                     text = await resp.text()
                     self.logger.warning("Failed to get live meeting %s: %s - %s", meeting_id, resp.status, text)
+                    return None
+
+
+    async def get_cloud_recording_urls(self, meeting_id: str) -> Optional[Dict[str, Any]]:
+        """Get cloud recording download URLs for a completed meeting.
+        
+        Returns dict with recording information including download_url, play_url for each file.
+        Returns None if no recordings found or meeting not recorded.
+        
+        Zoom API Endpoint: GET /v2/meetings/{meetingId}/recordings
+        
+        Response includes:
+        - recording_files[]: Array of recording files
+          - download_url: Direct download link (expires in 24hrs)
+          - play_url: Web player link
+          - file_type: MP4, M4A, TIMELINE, TRANSCRIPT, CHAT, CC
+          - file_size: Size in bytes
+          - recording_start: Start timestamp
+          - recording_end: End timestamp
+        - share_url: Zoom's web page to view/download recordings
+        """
+        self.logger.debug("Getting cloud recording URLs for meeting %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/recordings"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.logger.debug("Cloud recordings for meeting %s retrieved: %d files", 
+                                     meeting_id, len(data.get('recording_files', [])))
+                    return data
+                elif resp.status == 404:
+                    self.logger.debug("No cloud recordings found for meeting %s", meeting_id)
+                    return None
+                else:
+                    text = await resp.text()
+                    self.logger.warning("Failed to get cloud recordings for meeting %s: %s - %s", 
+                                       meeting_id, resp.status, text)
                     return None
 
 

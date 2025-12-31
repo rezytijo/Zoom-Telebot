@@ -11,7 +11,7 @@ def escape_md(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
 
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons, main_menu_keyboard, meetings_menu_keyboard, users_menu_keyboard, backup_menu_keyboard, info_menu_keyboard, shortener_menu_keyboard
 from config import settings
 from bot.auth import is_allowed_to_create, is_owner_or_admin
@@ -1689,7 +1689,7 @@ async def cmd_sync_meetings(msg: Message):
             f"➕ Ditambahkan: {stats['added']}\n"
             f"🔄 Diupdate: {stats['updated']}\n"
             f"🗑️ Ditandai Dihapus: {stats['deleted']}\n"
-            f"⏰ Ditandai Expired: {stats.get('expired', 0)}\n"
+            f"✅ Ditandai Done: {stats.get('expired', 0)}\n"
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Sistem otomatis mensinkronkan setiap 30 menit dan saat startup.</i>"
         )
@@ -1710,21 +1710,21 @@ async def cmd_check_expired(msg: Message):
         await msg.reply("Hanya owner yang dapat menjalankan check expired meetings.")
         return
 
-    await msg.reply("🔍 Memeriksa meeting yang sudah expired...")
+    await msg.reply("🔍 Memeriksa meeting yang sudah done...")
 
     try:
         stats = await update_expired_meetings()
         text = (
-            "✅ <b>Pemeriksaan expired selesai!</b>\n\n"
+            "✅ <b>Pemeriksaan done selesai!</b>\n\n"
             f"📊 <b>Statistik:</b>\n"
-            f"⏰ Meeting ditandai expired: {stats['expired']}\n"
+            f"✅ Meeting ditandai done: {stats['expired']}\n"
             f"❌ Error: {stats['errors']}\n\n"
-            "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai expired.</i>"
+            "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai done.</i>"
         )
         await msg.reply(text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
     except Exception as e:
         logger.exception("Manual expiry check failed: %s", e)
-        await msg.reply(f"❌ <b>Gagal memeriksa expired meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await msg.reply(f"❌ <b>Gagal memeriksa done meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
 
 
 @router.message(Command("start"))
@@ -2249,6 +2249,128 @@ async def cb_sync_refresh_list(c: CallbackQuery):
     except Exception as e:
         logger.exception("Sync and refresh failed: %s", e)
         await c.answer(f"❌ Gagal sync: {e}")
+
+
+@router.callback_query(lambda c: c.data == 'list_cloud_recordings' or c.data.startswith('list_cloud_recordings:'))
+async def cb_list_cloud_recordings(c: CallbackQuery):
+    """Show list of meetings with cloud recording status (paginated, 5 per page)."""
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    try:
+        # Extract page number from callback data
+        page = 1
+        if ':' in c.data:
+            try:
+                page = int(c.data.split(':')[1])
+            except (ValueError, IndexError):
+                page = 1
+        
+        meetings = await list_meetings()
+        
+        # Filter meetings that have been completed
+        completed_meetings = [m for m in meetings if m.get('status') == 'done' or m.get('status') == 'deleted']
+        
+        # Sort by start_time descending (newest first)
+        from datetime import datetime
+        try:
+            completed_meetings.sort(
+                key=lambda m: datetime.fromisoformat(m.get('start_time', '').replace('Z', '+00:00')) 
+                    if m.get('start_time') else datetime.min,
+                reverse=True
+            )
+        except Exception:
+            # If sorting fails, keep original order
+            pass
+        
+        # Pagination: 5 per page
+        items_per_page = 5
+        total_pages = (len(completed_meetings) + items_per_page - 1) // items_per_page
+        
+        # Ensure page is valid
+        if page < 1:
+            page = 1
+        elif page > total_pages and total_pages > 0:
+            page = total_pages
+        
+        # Get items for current page
+        start_idx = (page - 1) * items_per_page
+        end_idx = start_idx + items_per_page
+        page_meetings = completed_meetings[start_idx:end_idx]
+        
+        # Build text
+        text = "☁️ <b>Cloud Recordings</b>\n\n"
+        
+        if not completed_meetings:
+            text += "Tidak ada meeting yang telah selesai.\n\n"
+        else:
+            text += f"<b>Meeting Selesai ({len(completed_meetings)}):</b>\n"
+            text += f"<i>Halaman {page}/{total_pages if total_pages > 0 else 1} (5 per halaman)</i>\n"
+            
+            for idx, m in enumerate(page_meetings, start_idx + 1):
+                topic = m.get('topic', 'No Title')[:30]
+                meeting_id = m.get('zoom_meeting_id', '')
+                status = m.get('status', 'unknown')
+                
+                # Check if has recording data cached
+                recording_data = await get_meeting_cloud_recording_data(meeting_id)
+                recording_status = "✅" if recording_data else "⏳"
+                
+                text += f"\n{idx}. {recording_status} {topic}\n"
+                text += f"   ID: <code>{meeting_id}</code>\n"
+                text += f"   Status: {status}\n"
+        
+        text += "\n<i>Tekan meeting untuk melihat cloud recording details</i>"
+        
+        # Create keyboard with meeting options
+        kb_rows = []
+        
+        for m in page_meetings:
+            topic = m.get('topic', 'No Title')[:25]
+            meeting_id = m.get('zoom_meeting_id', '')
+            recording_data = await get_meeting_cloud_recording_data(meeting_id)
+            recording_status = "✅" if recording_data else "⏳"
+            
+            kb_rows.append([
+                InlineKeyboardButton(
+                    text=f"{recording_status} {topic}", 
+                    callback_data=f"view_cloud_recordings:{meeting_id}"
+                )
+            ])
+        
+        # Add pagination buttons if needed
+        if total_pages > 1:
+            pagination_row = []
+            if page > 1:
+                pagination_row.append(InlineKeyboardButton(text="◀️ Sebelumnya", callback_data=f"list_cloud_recordings:{page-1}"))
+            
+            pagination_row.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="noop"))
+            
+            if page < total_pages:
+                pagination_row.append(InlineKeyboardButton(text="Berikutnya ▶️", callback_data=f"list_cloud_recordings:{page+1}"))
+            
+            if pagination_row:
+                kb_rows.append(pagination_row)
+        
+        # Add back button
+        kb_rows.append([InlineKeyboardButton(text="⬅️ Kembali ke Daftar Meeting", callback_data="list_meetings")])
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        
+        from aiogram.types import Message as AiMessage
+        m = getattr(c, 'message', None)
+        if isinstance(m, AiMessage):
+            try:
+                await m.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                await c.answer(text, show_alert=True)
+        else:
+            await c.answer(text, show_alert=True)
+            
+    except Exception as e:
+        logger.exception("Failed to list cloud recordings: %s", e)
+        await c.answer(f"❌ Gagal menampilkan cloud recordings: {e}", show_alert=True)
 
 
 @router.callback_query(lambda c: c.data == 'search_user')
@@ -3740,7 +3862,7 @@ async def cb_sync_meetings(c: CallbackQuery):
             f"➕ Ditambahkan: {stats['added']}\n"
             f"🔄 Diupdate: {stats['updated']}\n"
             f"🗑️ Ditandai Dihapus: {stats['deleted']}\n"
-            f"⏰ Ditandai Expired: {stats.get('expired', 0)}\n"
+            f"✅ Ditandai Done: {stats.get('expired', 0)}\n"
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Sistem otomatis mensinkronkan setiap 30 menit dan saat startup.</i>"
         )
@@ -3762,21 +3884,21 @@ async def cb_check_expired(c: CallbackQuery):
         await c.answer("Hanya owner yang dapat menjalankan check expired meetings.")
         return
 
-    await c.answer("🔍 Memeriksa meeting yang sudah expired...")
+    await c.answer("🔍 Memeriksa meeting yang sudah done...")
 
     try:
         stats = await update_expired_meetings()
         text = (
-            "✅ <b>Pemeriksaan expired selesai!</b>\n\n"
+            "✅ <b>Pemeriksaan done selesai!</b>\n\n"
             f"📊 <b>Statistik:</b>\n"
-            f"⏰ Meeting ditandai expired: {stats['expired']}\n"
+            f"✅ Meeting ditandai done: {stats['expired']}\n"
             f"❌ Error: {stats['errors']}\n\n"
-            "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai expired.</i>"
+            "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai done.</i>"
         )
         await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
     except Exception as e:
         logger.exception("Manual expiry check failed: %s", e)
-        await _safe_edit_or_fallback(c, f"❌ <b>Gagal memeriksa expired meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await _safe_edit_or_fallback(c, f"❌ <b>Gagal memeriksa done meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
 
 
 @router.callback_query(lambda c: c.data == 'show_help')

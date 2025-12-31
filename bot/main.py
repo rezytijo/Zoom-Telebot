@@ -13,6 +13,7 @@ from bot.cloud_recording_handlers import router as cloud_recording_router
 from bot.fsm_storage import DatabaseFSMStorage
 from db import init_db, get_user_by_telegram_id, sync_meetings_from_zoom
 from bot.middleware import LoggingMiddleware
+from bot.background_tasks import start_background_tasks, stop_background_tasks
 from zoom import zoom_client
 
 
@@ -74,6 +75,10 @@ async def on_startup(bot: Bot):
     # Start background timeout check task
     asyncio.create_task(background_check_timeouts())
     logger.info("Background timeout check task started")
+    
+    # Start background tasks (cloud recording sync, cleanup, etc)
+    await start_background_tasks()
+    logger.info("Background task manager started")
 
 
 async def main():
@@ -139,6 +144,10 @@ async def main():
         logger.error("Unexpected error during bot operation: %s", e)
         raise
     finally:
+        # Stop background tasks
+        await stop_background_tasks()
+        logger.info("Background tasks stopped")
+        
         await bot.session.close()
         logger.info("Shutdown complete.")
 

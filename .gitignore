@@ -208,8 +208,7 @@ client_secret.json
 *.pfx
 *.jks
 
-# Remove AI context from repo
-context.md
+# NOTE: context.md is INCLUDED (contains AI context documentation)
 
 # Editor/IDE local settings that may contain tokens
 .vscode/settings.json

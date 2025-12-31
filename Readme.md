@@ -48,6 +48,11 @@ Untuk informasi lebih lengkap tentang project ini, silakan baca dokumentasi beri
 - **[🏗️ Architecture Guide](docs/ARCHITECTURE.md)** - Modular architecture dan multi-developer collaboration
 - **[🤖 AI Context Reference](context.md)** - Referensi untuk AI assistant (internal use)
 
+### **🗄️ Database & Migration**
+- **[📖 Migration Index](docs/MIGRATION_INDEX.md)** - Quick navigation for all migration-related docs
+- **[📚 Complete Migration Guide](docs/DATABASE_MIGRATIONS.md)** - Comprehensive guide with examples, troubleshooting, and best practices
+- **[🔧 Schema Reference](db/schema.sql)** - Production SQL schema definition with inline documentation
+
 ### **🆕 Feature Documentation**
 - **[🔄 Shortener Migration Guide](docs/SHORTENER_MIGRATION.md)** - Automatic config migration system
 - **[📊 Migration Summary](docs/MIGRATION_SUMMARY.md)** - Technical implementation details

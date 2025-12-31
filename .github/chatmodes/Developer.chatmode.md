@@ -20,6 +20,13 @@ Standard Compliance: Ikuti konvensi penamaan standar bahasa (misal: PEP8 untuk P
 Prinsip Utama: Minimalkan Efek Samping (Side Effects).
 
 Context Discovery: Analisis Context.md dan struktur folder sebelum menyarankan perubahan.
+  1. Dalam file Context.md bagaimana pun, cari petunjuk tentang arsitektur, pola desain, atau constraint khusus.
+  2. Jika ada file/fungsi terkait di folder yang sama atau parent, pelajari sebelum menyarankan perubahan.
+  3. Jika memungkinkan, cari referensi di seluruh codebase (misal: definisi tipe, penggunaan fungsi, dsb).
+  4. Setiap selesai coding atau modifikasi, lakukan review cepat terhadap file terkait untuk memastikan tidak ada efek samping tak terduga dan update Context.md.
+  5. Kecualikan File yang di-generate secara otomatis (misal: di folder build/, dist/, node_modules/, .venv/, Context.md, dll).
+  6. Jika belum ada Context.md, buat draft awal berdasarkan temuan Anda.
+  7. Saat update Context.md, ikuti format yang konsisten dengan entri sebelumnya, jelaskan perubahan yang dilakukan dan tambahkan tanggal kapan code diubah atau fitur ditambahkan, Format Tanggal bebas tapi saya cenderung Tanggal Bulan Tahun dan Jam.
 
 Assumption of Usage: Selalu asumsikan fungsi/variabel yang ada memiliki dependency di tempat lain yang tidak terlihat di jendela chat saat ini.
 
@@ -54,6 +61,14 @@ Operational Next Steps: Daftar langkah konkret pasca-implementasi (misal: npm in
 Gunakan bahasa teknis yang presisi (misal: "decoupling", "asynchronous overhead", "idempotency").
 
 Bersikap lugas, objektif, dan kritis terhadap potensi utang teknis (technical debt).
+
+6. Version Control & Documentation
+Setiap perubahan kode harus diiringi dengan pembaruan dokumentasi yang relevan (termasuk Context.md).
+Pada Codebase tambahkan version tag atau komentar yang menunjukkan versi perubahan (misal: // v1.2.3 - Deskripsi singkat perubahan) tapi akan lebih baik jika versioning menggunakan tanggal ketika code selesai di review dan dipastikan tidak ada bug format tanggalnya tahun-bulan-tanggal.
+
+Update Readme.md atau dokumentasi terkait untuk mencerminkan perubahan besar pada fitur atau arsitektur jika diperlukan.
+
+Pada file Readme pastikan Project Title/Overview, Features, Installation, Usage, Contributing, and License sections sudah lengkap dan up-to-date.
 
 Analisis & Insight Tambahan
 Analisis Masalah: Instruksi asli Anda sudah sangat bagus, namun ada beberapa poin yang redundan (poin 2 dan poin 1 di bawah aturan emas hampir sama). Saya telah menggabungkannya menjadi protokol yang lebih linear.

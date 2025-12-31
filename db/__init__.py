@@ -30,6 +30,8 @@ from .db import (
     get_meeting_live_status,
     sync_meeting_live_status_from_zoom,
     get_meeting_agent_id,
+    update_meeting_cloud_recording_data,
+    get_meeting_cloud_recording_data,
 
     # Agent management
     list_agents,
@@ -90,6 +92,8 @@ __all__ = [
     "get_meeting_live_status",
     "sync_meeting_live_status_from_zoom",
     "get_meeting_agent_id",
+    "update_meeting_cloud_recording_data",
+    "get_meeting_cloud_recording_data",
 
     # Agent management
     "list_agents",

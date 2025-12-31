@@ -31,6 +31,7 @@ CREATE_SQL = [
         join_url TEXT,
         status TEXT DEFAULT 'active', -- active, deleted, expired
         created_by TEXT, -- INTEGER (telegram_id) for bot-created, "CreatedFromZoomApp" for zoom-created
+        cloud_recording_data TEXT, -- JSON with {share_url, recording_files[], total_size, recording_count, last_checked}
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -109,12 +110,32 @@ async def run_migrations(db):
         if 'agent_id' not in column_names:
             logger.info("Adding agent_id column to meeting_live_status table")
             await db.execute("ALTER TABLE meeting_live_status ADD COLUMN agent_id INTEGER")
+            await db.commit()
             logger.info("Migration 1 completed: agent_id column added")
         else:
             logger.debug("Migration 1 skipped: agent_id column already exists")
             
     except Exception as e:
         logger.error("Migration 1 failed: %s", e)
+        raise
+    
+    # Migration 2: Add cloud_recording_data column to meetings table
+    try:
+        # Check if cloud_recording_data column exists
+        cursor = await db.execute("PRAGMA table_info(meetings)")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+        
+        if 'cloud_recording_data' not in column_names:
+            logger.info("Adding cloud_recording_data column to meetings table")
+            await db.execute("ALTER TABLE meetings ADD COLUMN cloud_recording_data TEXT")
+            await db.commit()
+            logger.info("Migration 2 completed: cloud_recording_data column added")
+        else:
+            logger.debug("Migration 2 skipped: cloud_recording_data column already exists")
+            
+    except Exception as e:
+        logger.error("Migration 2 failed: %s", e)
         raise
     
     logger.info("Database migrations completed")
@@ -462,6 +483,55 @@ async def update_meeting_details(zoom_meeting_id: str, topic: str | None = None,
     logger.info("Meeting %s details updated", zoom_meeting_id)
 
 
+async def update_meeting_cloud_recording_data(zoom_meeting_id: str, recording_data: Optional[Dict[str, any]] = None):
+    """Update meeting cloud recording data.
+    
+    Args:
+        zoom_meeting_id: Zoom meeting ID
+        recording_data: Dict with {share_url, recording_files[], total_size, recording_count, last_checked}
+                       None to clear recording data
+    """
+    logger.debug("update_meeting_cloud_recording_data zoom_id=%s", zoom_meeting_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        if recording_data:
+            data_json = json.dumps(recording_data, default=str)  # default=str for datetime serialization
+            await db.execute(
+                "UPDATE meetings SET cloud_recording_data = ?, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                (data_json, zoom_meeting_id)
+            )
+            logger.info("Meeting %s cloud recording data updated: %d files", zoom_meeting_id, 
+                       recording_data.get('recording_count', 0))
+        else:
+            await db.execute(
+                "UPDATE meetings SET cloud_recording_data = NULL, updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                (zoom_meeting_id,)
+            )
+            logger.info("Meeting %s cloud recording data cleared", zoom_meeting_id)
+        await db.commit()
+
+
+async def get_meeting_cloud_recording_data(zoom_meeting_id: str) -> Optional[Dict[str, any]]:
+    """Get stored cloud recording data for a meeting.
+    
+    Returns dict with {share_url, recording_files[], total_size, recording_count, last_checked}
+    or None if no recording data available.
+    """
+    logger.debug("get_meeting_cloud_recording_data zoom_id=%s", zoom_meeting_id)
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute(
+            "SELECT cloud_recording_data FROM meetings WHERE zoom_meeting_id = ?",
+            (zoom_meeting_id,)
+        )
+        row = await cur.fetchone()
+        if row and row[0]:
+            try:
+                return json.loads(row[0])
+            except json.JSONDecodeError:
+                logger.warning("Failed to decode cloud_recording_data for meeting %s", zoom_meeting_id)
+                return None
+        return None
+
+
 async def update_meeting_recording_status(zoom_meeting_id: str, recording_status: str, agent_id: Optional[int] = None):
     """Update meeting recording status (stopped, recording, paused)"""
     logger.debug("update_meeting_recording_status zoom_id=%s recording_status=%s agent_id=%s", zoom_meeting_id, recording_status, agent_id)
@@ -699,11 +769,11 @@ async def sync_meetings_from_zoom(zoom_client) -> Dict[str, int]:
                     # Check if meeting has expired (current time > start time)
                     if now > start_time:
                         await db.execute(
-                            "UPDATE meetings SET status = 'expired', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                            "UPDATE meetings SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
                             (zoom_id,)
                         )
                         stats['expired'] += 1
-                        logger.debug("Marked meeting %s (%s) as expired", zoom_id, topic)
+                        logger.debug("Marked meeting %s (%s) as done", zoom_id, topic)
 
                 except Exception as e:
                     logger.warning("Failed to process meeting %s: %s", zoom_id, e)
@@ -759,11 +829,11 @@ async def update_expired_meetings() -> Dict[str, int]:
                     # Check if meeting has expired (current time > start time)
                     if now > start_time:
                         await db.execute(
-                            "UPDATE meetings SET status = 'expired', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
+                            "UPDATE meetings SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE zoom_meeting_id = ?",
                             (zoom_id,)
                         )
                         stats['expired'] += 1
-                        logger.debug("Marked meeting %s (%s) as expired", zoom_id, topic)
+                        logger.debug("Marked meeting %s (%s) as done", zoom_id, topic)
 
                 except Exception as e:
                     logger.warning("Failed to process meeting %s: %s", zoom_id, e)
