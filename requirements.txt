@@ -3,6 +3,7 @@ aiogram
 aiohttp
 aiosqlite
 python-dotenv
+pytz
 
 # Development & Testing
 pytest
