@@ -388,7 +388,7 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
 
         # Parse recording data
         topic = recording_data.get('topic', 'No Topic')
-        start_time = recording_data.get('start_time', 'N/A')
+        start_time_raw = recording_data.get('start_time', 'N/A')
         duration = recording_data.get('duration', 0)
         total_size = recording_data.get('total_size', 0)
         recording_count = recording_data.get('recording_count', 0)
@@ -406,6 +406,38 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
                 return f"{bytes_size/1024**2:.1f} MB"
             else:
                 return f"{bytes_size/1024**3:.2f} GB"
+
+        # Format start_time using user's timezone
+        start_time = start_time_raw
+        if start_time_raw and start_time_raw != 'N/A':
+            try:
+                from datetime import datetime, timezone
+                import pytz
+                from config import settings
+                
+                dt = datetime.fromisoformat(start_time_raw.replace('Z', '+00:00'))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                
+                user_tz = pytz.timezone(settings.timezone)
+                local_dt = dt.astimezone(user_tz)
+                
+                day_name = {
+                    'Monday': 'Senin', 'Tuesday': 'Selasa', 'Wednesday': 'Rabu',
+                    'Thursday': 'Kamis', 'Friday': 'Jumat', 'Saturday': 'Sabtu',
+                    'Sunday': 'Minggu'
+                }.get(local_dt.strftime("%A"), local_dt.strftime("%A"))
+                
+                month_name = {
+                    'January': 'Januari', 'February': 'Februari', 'March': 'Maret',
+                    'April': 'April', 'May': 'Mei', 'June': 'Juni',
+                    'July': 'Juli', 'August': 'Agustus', 'September': 'September',
+                    'October': 'Oktober', 'November': 'November', 'December': 'Desember'
+                }.get(local_dt.strftime("%B"), local_dt.strftime("%B"))
+                
+                start_time = f"{day_name}, {local_dt.day:02d} {month_name} {local_dt.year} {local_dt:%H:%M}"
+            except Exception as e:
+                logger.debug(f"Failed to format start_time {start_time_raw}: {e}")
 
         # Build message
         text = (
