@@ -1,8 +1,8 @@
 # Zoom-Telebot SOC - AI Context Reference
 
 **Created:** December 5, 2025  
-**Last Updated:** January 8, 2026 17:30 WIB  
-**Version:** v2026.01.08.7 (Role adjustments)
+**Last Updated:** January 8, 2026 17:45 WIB  
+**Version:** v2026.01.08.8 (GitHub push)
 
 **Docker Images:**
 - `rezytijo/zoom-telebot:latest`
@@ -12,6 +12,7 @@
   - Pushed to Docker Hub on January 8, 2026
 
 **Latest Changes:**
+- 2026-01-08 17:45 WIB — Repository push: Committed and pushed role adjustments and Docker image details to GitHub `main` branch.
 - 2026-01-08 17:00 WIB — Adjusted role requirements: Admin/Owner only for User Management, Meeting Sync, Check Expired, Backup/Restore. Minimal user role for Create Meeting, Meeting Management (list/delete), Control Meeting, Cloud Recording, URL Shortener. Added is_registered_user() function in auth.py and updated handlers accordingly.
 - 2026-01-08 16:00 WIB — Docker image built and pushed to Docker Hub with multi-platform support (AMD64 and ARM64) for tags: rezytijo/zoom-telebot:latest, rezytijo/zoom-telebot:dev.v2025.12.31, rezytijo/zoom-telebot:v2025.12.31.
 - 2026-01-08 13:30 WIB — Ensure the "☁️ Cloud Recording" button is always visible on the meeting list view, even when active meetings exist. Change applied in [bot/handlers.py](bot/handlers.py#L) within `_do_list_meetings()`.
