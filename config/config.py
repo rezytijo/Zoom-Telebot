@@ -100,5 +100,10 @@ class Settings:
     bitly_token: str | None = os.getenv('BITLY_TOKEN')
     bitly_api_url: str = os.getenv('BITLY_API_URL', 'https://api-ssl.bitly.com/v4/shorten')
 
+    # FSM TTL (seconds). If None or invalid, storage defaults to 300s
+    fsm_ttl_seconds: int | None = _to_int(os.getenv('FSM_TTL_SECONDS')) or (
+        (_to_int(os.getenv('FSM_TTL_MINUTES')) or 0) * 60 or None
+    )
+
 
 settings = Settings()

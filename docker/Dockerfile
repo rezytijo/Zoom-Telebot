@@ -1,5 +1,5 @@
 # Dockerfile for Zoom-Telebot SOC
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -28,7 +28,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Production stage
-FROM base as production
+FROM base AS production
 
 # Copy application code
 COPY . .
@@ -53,7 +53,7 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # USER botuser
 
 # Development stage (optional)
-FROM base as development
+FROM base AS development
 
 # Install additional dev dependencies
 RUN pip install --no-cache-dir \

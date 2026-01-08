@@ -67,6 +67,27 @@ clean: ## Remove containers, networks, and images
 clean-logs: ## Clean log files
 	sudo rm -rf logs/*.log
 
+migrate: ## Run database migrations (production)
+	@echo "🔄 Running database migrations..."
+	docker compose exec zoom-telebot python scripts/run_migration.py
+	@echo "✅ Migration complete. Restart bot to apply changes: make restart"
+
+migrate-dev: ## Run database migrations (development)
+	@echo "🔄 Running database migrations (dev)..."
+	docker compose --profile dev exec zoom-telebot-dev python scripts/run_migration.py
+	@echo "✅ Migration complete. Restart bot to apply changes: make dev-restart"
+
+migrate-local: ## Run database migrations (local/no Docker)
+	@echo "🔄 Running database migrations (local)..."
+	python scripts/run_migration.py
+	@echo "✅ Migration complete. Restart bot to apply changes."
+
+db-check: ## Check database schema
+	@echo "📊 Checking database schema..."
+	docker compose exec zoom-telebot sqlite3 /app/zoom_telebot.db "PRAGMA table_info(meetings);"
+	@echo ""
+	docker compose exec zoom-telebot sqlite3 /app/zoom_telebot.db "PRAGMA table_info(meeting_live_status);"
+
 backup: ## Create database backup
 	@echo "Creating backup..."
 	@mkdir -p backups

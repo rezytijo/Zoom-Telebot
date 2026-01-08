@@ -1092,7 +1092,8 @@ async def cb_edit_meeting(c: CallbackQuery, state: FSMContext):
         try:
             dt = datetime.fromisoformat(current_start_time.replace('Z', '+00:00'))
             current_date = str(dt.date())
-            current_time = dt.time()
+            # Convert time object to ISO format string for JSON serialization
+            current_time = dt.time().isoformat()
         except:
             pass
     
@@ -1190,22 +1191,19 @@ async def edit_meeting_time(msg: Message, state: FSMContext):
         resp = await zoom_client.update_meeting(meeting_id, topic=topic, start_time=start_time_iso)
         # Update local DB
         await update_meeting_details(meeting_id, topic=topic, start_time=start_time_iso)
-        # Send success message
-        await msg.reply(f"✅ Meeting berhasil diperbarui! (meeting_id={meeting_id})")
-        # After successful edit, return to meeting list by simulating callback
-        # Create a fake callback query to trigger list_meetings
-        from aiogram.types import CallbackQuery
-        fake_c = CallbackQuery(
-            id="fake",
-            from_user=msg.from_user,
-            chat_instance="fake",
-            data="list_meetings",
-            message=msg  # Use the current message
-        )
-        await cb_list_meetings(fake_c)
+        # Send success message with back button
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Kembali ke Daftar Meeting", callback_data="list_meetings")],
+            [InlineKeyboardButton(text="🏠 Menu Utama", callback_data="back_to_main")]
+        ])
+        await msg.reply(f"✅ Meeting berhasil diperbarui!\n\n🆔 Meeting ID: {meeting_id}", reply_markup=kb)
     except Exception as e:
         logger.exception("Failed to update meeting %s: %s", meeting_id, e)
-        await msg.reply(f"❌ Gagal memperbarui meeting: {e}")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏮️ Kembali ke Edit", callback_data=f"edit_meeting:{meeting_id}")],
+            [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+        ])
+        await msg.reply(f"❌ Gagal memperbarui meeting: {e}", reply_markup=kb)
 
     await state.clear()
 
@@ -1262,9 +1260,15 @@ async def cb_skip_time(c: CallbackQuery, state: FSMContext):
         return
 
     # Use current time if time was skipped, otherwise use the stored current_time
-    time_obj = data.get('current_time')
-    if not time_obj:
+    time_str = data.get('current_time')
+    if not time_str:
         time_obj = datetime.now().time()
+    else:
+        # Parse time string (ISO format HH:MM:SS) back to time object
+        try:
+            time_obj = datetime.fromisoformat(f"2000-01-01T{time_str}").time()
+        except:
+            time_obj = datetime.now().time()
     
     # Combine date and time into ISO with WIB timezone
     d = datetime.fromisoformat(date_str)
@@ -1279,11 +1283,21 @@ async def cb_skip_time(c: CallbackQuery, state: FSMContext):
         resp = await zoom_client.update_meeting(meeting_id, topic=topic, start_time=start_time_iso)
         # Update local DB
         await update_meeting_details(meeting_id, topic=topic, start_time=start_time_iso)
-        # Auto-return to meeting list
-        await cb_list_meetings(c)
+        # Send success message with navigation
+        text = f"✅ Meeting berhasil diperbarui!\n\n🆔 Meeting ID: {meeting_id}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")],
+            [InlineKeyboardButton(text="🏠 Menu Utama", callback_data="back_to_main")]
+        ])
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         logger.exception("Failed to update meeting %s: %s", meeting_id, e)
-        await _safe_edit_or_fallback(c, f"❌ Gagal memperbarui meeting: {e}")
+        text = f"❌ Gagal memperbarui meeting: {e}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")],
+            [InlineKeyboardButton(text="🏠 Menu Utama", callback_data="back_to_main")]
+        ])
+        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
 
     await state.clear()
     await c.answer()
@@ -2200,7 +2214,9 @@ async def _do_list_meetings(c: CallbackQuery):
                     InlineKeyboardButton(text="🗑️ Delete", callback_data=f"confirm_delete:{mid}")
                 ])
 
-        # add navigation / back buttons
+        # add Cloud Recording entry and navigation/back buttons
+        # Ensure the Cloud Recording button is visible even when meetings exist
+        kb_rows.append([InlineKeyboardButton(text="☁️ Cloud Recording", callback_data="list_cloud_recordings")])
         kb_rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="sync_refresh_list"), InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
