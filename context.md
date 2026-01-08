@@ -1,11 +1,19 @@
 # Zoom-Telebot SOC - AI Context Reference
 
 **Created:** December 5, 2025  
-**Last Updated:** January 8, 2026 15:30 WIB  
-**Version:** v2026.01.08.5 (Context update + GitHub push)
+**Last Updated:** January 8, 2026 17:30 WIB  
+**Version:** v2026.01.08.7 (Role adjustments)
+
+**Docker Images:**
+- `rezytijo/zoom-telebot:latest`
+- `rezytijo/zoom-telebot:dev.v2025.12.31`
+- `rezytijo/zoom-telebot:v2025.12.31`
+  - Built with multi-platform support (AMD64 and ARM64)
+  - Pushed to Docker Hub on January 8, 2026
 
 **Latest Changes:**
-- 2026-01-08 15:30 WIB — Repository sync: Update Context.md and push to GitHub `main`. No functional code changes.
+- 2026-01-08 17:00 WIB — Adjusted role requirements: Admin/Owner only for User Management, Meeting Sync, Check Expired, Backup/Restore. Minimal user role for Create Meeting, Meeting Management (list/delete), Control Meeting, Cloud Recording, URL Shortener. Added is_registered_user() function in auth.py and updated handlers accordingly.
+- 2026-01-08 16:00 WIB — Docker image built and pushed to Docker Hub with multi-platform support (AMD64 and ARM64) for tags: rezytijo/zoom-telebot:latest, rezytijo/zoom-telebot:dev.v2025.12.31, rezytijo/zoom-telebot:v2025.12.31.
 - 2026-01-08 13:30 WIB — Ensure the "☁️ Cloud Recording" button is always visible on the meeting list view, even when active meetings exist. Change applied in [bot/handlers.py](bot/handlers.py#L) within `_do_list_meetings()`.
 - 2026-01-08 14:05 WIB — Add 5-minute TTL for FSM states to avoid stale flows blocking other actions. Implemented in [bot/fsm_storage.py](bot/fsm_storage.py#L). TTL defaults to 300s and can be configured via environment `FSM_TTL_SECONDS` or `FSM_TTL_MINUTES`.
 - 2026-01-08 14:15 WIB — **FIX: Edit Meeting Hang Issue** — Removed fake `CallbackQuery` creation in `edit_meeting_time()` and `cb_skip_time()` handlers that caused loading hang. Now handlers directly send success message with navigation buttons instead of trying to invoke `cb_list_meetings()` callback. Applied in [bot/handlers.py](bot/handlers.py#L).

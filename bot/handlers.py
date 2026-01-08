@@ -14,7 +14,7 @@ def escape_md(text: str) -> str:
 from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons, main_menu_keyboard, meetings_menu_keyboard, users_menu_keyboard, backup_menu_keyboard, info_menu_keyboard, shortener_menu_keyboard
 from config import settings
-from bot.auth import is_allowed_to_create, is_owner_or_admin
+from bot.auth import is_allowed_to_create, is_owner_or_admin, is_registered_user
 from zoom import zoom_client
 import logging
 
@@ -1511,8 +1511,8 @@ async def cmd_zoom(msg: Message):
         return
 
     user = await get_user_by_telegram_id(msg.from_user.id)
-    if not is_allowed_to_create(user):
-        await msg.reply("Anda belum diizinkan membuat meeting.", reply_markup=back_to_main_new_buttons())
+    if not is_registered_user(user):
+        await msg.reply("Anda belum terdaftar atau dibanned.", reply_markup=back_to_main_new_buttons())
         return
 
     # Split message into lines and process each line as a separate meeting
@@ -1853,9 +1853,9 @@ async def cb_create_meeting(c: CallbackQuery, state: FSMContext):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    # allow whitelisted users or owners (centralized check)
-    if not is_allowed_to_create(user):
-        await c.answer("Anda belum diizinkan membuat meeting.")
+    # allow registered users
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     logger.info("Starting meeting creation flow for user %s", c.from_user.id)
@@ -2060,8 +2060,8 @@ async def cb_list_meetings(c: CallbackQuery):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_allowed_to_create(user):
-        await c.answer("Anda belum diizinkan melihat meetings.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     await c.answer("Mengambil daftar meeting...")
@@ -2466,8 +2466,8 @@ async def cb_short_url(c: CallbackQuery, state: FSMContext):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_allowed_to_create(user):
-        await c.answer("Anda belum diizinkan menggunakan fitur Short URL.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     await c.answer()
@@ -2486,8 +2486,8 @@ async def cb_shorten_meeting(c: CallbackQuery, state: FSMContext):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_allowed_to_create(user):
-        await c.answer("Anda belum diizinkan menggunakan fitur Short URL.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     # Extract token from callback data
@@ -2896,8 +2896,8 @@ async def cmd_zoom_del(msg: Message):
         return
 
     user = await get_user_by_telegram_id(msg.from_user.id)
-    if not is_allowed_to_create(user):
-        await msg.reply("Anda belum diizinkan menghapus meeting.")
+    if not is_registered_user(user):
+        await msg.reply("Anda belum terdaftar atau dibanned.")
         return
 
     # Split message into lines and process each line as a separate meeting ID
@@ -3718,8 +3718,8 @@ async def cb_menu_meetings(c: CallbackQuery):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_allowed_to_create(user):
-        await c.answer("Anda belum diizinkan mengakses menu ini.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     text = "📅 <b>Manajemen Meeting</b>\n\nPilih aksi yang ingin dilakukan:"
@@ -3835,8 +3835,8 @@ async def cb_menu_shortener(c: CallbackQuery):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_allowed_to_create(user):
-        await c.answer("Anda belum diizinkan mengakses menu ini.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     text = "🔗 <b>URL Shortener</b>\n\nBuat short URL untuk link meeting:"

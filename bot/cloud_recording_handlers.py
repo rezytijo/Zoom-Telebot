@@ -4,7 +4,7 @@
 from aiogram import Router
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from zoom import zoom_client
-from bot.auth import is_owner_or_admin
+from bot.auth import is_owner_or_admin, is_registered_user
 from db import get_user_by_telegram_id, get_meeting_recording_status, update_meeting_recording_status, list_meetings, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 import logging
 import asyncio
@@ -159,9 +159,9 @@ async def cb_cloud_start_record(c: CallbackQuery):
     user = await get_user_by_telegram_id(c.from_user.id)
     logger.debug("cb_cloud_start_record: User data: %s", user)
     
-    if not is_owner_or_admin(user):
-        logger.warning("cb_cloud_start_record: User not admin/owner")
-        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+    if not is_registered_user(user):
+        logger.warning("cb_cloud_start_record: User not registered")
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     meeting_id = c.data.split(':', 1)[1]
@@ -219,8 +219,8 @@ async def cb_cloud_stop_record(c: CallbackQuery):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_owner_or_admin(user):
-        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     meeting_id = c.data.split(':', 1)[1]
@@ -258,8 +258,8 @@ async def cb_cloud_pause_record(c: CallbackQuery):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_owner_or_admin(user):
-        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     meeting_id = c.data.split(':', 1)[1]
@@ -297,8 +297,8 @@ async def cb_cloud_resume_record(c: CallbackQuery):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_owner_or_admin(user):
-        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     meeting_id = c.data.split(':', 1)[1]
@@ -336,8 +336,8 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
         return
 
     user = await get_user_by_telegram_id(c.from_user.id)
-    if not is_owner_or_admin(user):
-        await c.answer("Aksi ini hanya untuk Admin/Owner.")
+    if not is_registered_user(user):
+        await c.answer("Anda belum terdaftar atau dibanned.")
         return
 
     meeting_id = c.data.split(':', 1)[1]
