@@ -161,6 +161,10 @@ __pycache__/
 telegram_bot2.py
 whitelist.txt
 
+# Ignore contents of data folder but keep folder structure for git
+data/*
+!data/.gitkeep
+
 # IDE
 .vscode/
 .idea/
