@@ -2073,7 +2073,39 @@ async def _do_list_meetings(c: CallbackQuery):
     try:
         all_meetings = await list_meetings_with_shortlinks()
         # Filter only active meetings (already filtered in query)
+        # v2026-01-14: now includes 'done' status in query
         meetings = all_meetings or []
+
+        # v2026-01-14: enforce listing range from local 00:00 today to +30 days
+        # Determine local timezone; default to WIB (UTC+7) if invalid
+        try:
+            target_tz = ZoneInfo(settings.timezone)
+        except Exception:
+            target_tz = timezone(timedelta(hours=7))
+
+        now_local = datetime.now(target_tz)
+        start_of_today_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_range_local = start_of_today_local + timedelta(days=30)
+
+        def _parse_to_local(st: str):
+            try:
+                if not st:
+                    return None
+                if isinstance(st, str) and st.endswith('Z'):
+                    dt = datetime.fromisoformat(st[:-1]).replace(tzinfo=timezone.utc)
+                else:
+                    dt = datetime.fromisoformat(st)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(target_tz)
+            except Exception:
+                return None
+
+        meetings = [
+            mm for mm in meetings
+            if (lambda dt_local: dt_local is not None and start_of_today_local <= dt_local <= end_range_local)
+               (_parse_to_local(mm.get('start_time', '')))
+        ]
 
         # Sort meetings by start_time ascending (earliest first).
         # We normalize parsed datetimes to UTC for consistent ordering.
@@ -2100,7 +2132,7 @@ async def _do_list_meetings(c: CallbackQuery):
         meetings = sorted(meetings, key=lambda mm: _parse_start_time_to_utc(mm.get('start_time', '')))
         
         if not meetings:
-            text = "📅 <b>Tidak ada meeting aktif yang tersimpan.</b>"
+            text = "📅 <b>Tidak ada meeting aktif/selesai yang tersimpan.</b>"
             # Try to edit the message directly for refresh
             from aiogram.types import Message as AiMessage
             m = getattr(c, 'message', None)
@@ -2108,12 +2140,12 @@ async def _do_list_meetings(c: CallbackQuery):
                 try:
                     await m.edit_text(text, parse_mode="HTML", reply_markup=list_meetings_buttons())
                 except Exception:
-                    await c.answer("Tidak ada meeting aktif")
+                    await c.answer("Tidak ada meeting aktif/selesai")
             else:
-                await c.answer("Tidak ada meeting aktif")
+                await c.answer("Tidak ada meeting aktif/selesai")
             return
 
-        text = "📅 <b>Daftar Zoom Meeting Aktif:</b>\n\n"
+        text = "📅 <b>Daftar Zoom Meeting (Aktif & Selesai):</b>\n\n"
         
         for i, m in enumerate(meetings, 1):
             topic = m.get('topic', 'No Topic')

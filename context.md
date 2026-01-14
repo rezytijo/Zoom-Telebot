@@ -12,6 +12,8 @@
   - Pushed to Docker Hub on January 8, 2026
 
 **Latest Changes:**
+- 2026-01-14 — Meeting list now includes status 'done' alongside 'active'. Updated query in [db/db.py](db/db.py#L) `list_meetings_with_shortlinks()` and user-facing copy in [bot/handlers.py](bot/handlers.py#L) within `_do_list_meetings()`.
+- 2026-01-14 — Enforce time window: meeting list shows items from local 00:00 today up to +30 days. Implemented range filter in [bot/handlers.py](bot/handlers.py#L) inside `_do_list_meetings()` using `settings.timezone` (fallback WIB/UTC+7).
 - 2026-01-08 17:45 WIB — Repository push: Committed and pushed role adjustments and Docker image details to GitHub `main` branch.
 - 2026-01-08 17:00 WIB — Adjusted role requirements: Admin/Owner only for User Management, Meeting Sync, Check Expired, Backup/Restore. Minimal user role for Create Meeting, Meeting Management (list/delete), Control Meeting, Cloud Recording, URL Shortener. Added is_registered_user() function in auth.py and updated handlers accordingly.
 - 2026-01-08 16:00 WIB — Docker image built and pushed to Docker Hub with multi-platform support (AMD64 and ARM64) for tags: rezytijo/zoom-telebot:latest, rezytijo/zoom-telebot:dev.v2025.12.31, rezytijo/zoom-telebot:v2025.12.31.

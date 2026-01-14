@@ -286,7 +286,7 @@ async def list_meetings_with_shortlinks() -> List[Dict]:
         meetings_cur = await db.execute("""
             SELECT id, zoom_meeting_id, topic, start_time, join_url, status, created_by, created_at, updated_at
             FROM meetings
-            WHERE status = 'active'
+            WHERE status IN ('active', 'done')
             ORDER BY created_at DESC
         """)
         meetings_rows = await meetings_cur.fetchall()
