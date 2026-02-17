@@ -11,4 +11,5 @@ pytest-asyncio
 
 # Development Tools
 watchdog
-dotenv
+# Security
+pip-audit

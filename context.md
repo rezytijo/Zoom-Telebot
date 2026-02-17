@@ -1,8 +1,9 @@
 # Zoom-Telebot SOC - AI Context Reference
 
 **Created:** December 5, 2025  
-**Last Updated:** January 8, 2026 17:45 WIB  
-**Version:** v2026.01.08.8 (GitHub push)
+**Created:** December 5, 2025  
+**Last Updated:** February 17, 2026 12:05 WIB  
+**Version:** v2026.02.17
 
 **Docker Images:**
 - `rezytijo/zoom-telebot:latest`
@@ -12,6 +13,14 @@
   - Pushed to Docker Hub on January 8, 2026
 
 **Latest Changes:**
+- 2026-02-17 12:05 WIB — **System Hardening & Testing (v2026.02.17)** — Implemented comprehensive system improvements:
+    1. **Centralized Logging**: Unification via `bot/logger.py` for consistent console/file output.
+    2. **Loading Feedback**: UX improvement with `bot/utils/loading.py` for long-running tasks.
+    3. **Migration Logic**: Concurrency protection using `bot.lock`.
+    4. **Graceful Shutdown**: Enhanced Windows signal handling (`SIGBREAK`).
+    5. **Automated Testing**: Initial FSM test suite (`tests/`) covering meeting creation flow.
+    6. **Security**: Added `pip-audit` integration for startup dependency checking.
+    7. **Docs**: Major `README.md` update.
 - 2026-01-14 — Meeting list now includes status 'done' alongside 'active'. Updated query in [db/db.py](db/db.py#L) `list_meetings_with_shortlinks()` and user-facing copy in [bot/handlers.py](bot/handlers.py#L) within `_do_list_meetings()`.
 - 2026-01-14 — Enforce time window: meeting list shows items from local 00:00 today up to +30 days. Implemented range filter in [bot/handlers.py](bot/handlers.py#L) inside `_do_list_meetings()` using `settings.timezone` (fallback WIB/UTC+7).
 - 2026-01-08 17:45 WIB — Repository push: Committed and pushed role adjustments and Docker image details to GitHub `main` branch.
@@ -20,6 +29,7 @@
 - 2026-01-08 13:30 WIB — Ensure the "☁️ Cloud Recording" button is always visible on the meeting list view, even when active meetings exist. Change applied in [bot/handlers.py](bot/handlers.py#L) within `_do_list_meetings()`.
 - 2026-01-08 14:05 WIB — Add 5-minute TTL for FSM states to avoid stale flows blocking other actions. Implemented in [bot/fsm_storage.py](bot/fsm_storage.py#L). TTL defaults to 300s and can be configured via environment `FSM_TTL_SECONDS` or `FSM_TTL_MINUTES`.
 - 2026-01-08 14:15 WIB — **FIX: Edit Meeting Hang Issue** — Removed fake `CallbackQuery` creation in `edit_meeting_time()` and `cb_skip_time()` handlers that caused loading hang. Now handlers directly send success message with navigation buttons instead of trying to invoke `cb_list_meetings()` callback. Applied in [bot/handlers.py](bot/handlers.py#L).
+- 2026-02-17 11:45 WIB — **Codebase Analysis & Security Audit** — Conducted a comprehensive analysis of the project's architecture, security posture, and quality metrics. Generated specialized reports in `/reports` directory. Verified that all credentials are properly managed via `.env` and that `.gitignore`/`.dockerignore` are correctly configured. No critical vulnerabilities found.
 - 2026-01-08 14:25 WIB — **FIX: Edit Meeting JSON Serialization Error** — Convert `time` object to ISO format string before storing in FSM state (`current_time = dt.time().isoformat()`). Parse back from string when retrieving. Fixes `TypeError: Object of type time is not JSON serializable` in [bot/handlers.py](bot/handlers.py#L) `cb_edit_meeting()` and `cb_skip_time()`.
 
 **Database Migration System Added (Jan 1, 2026):**

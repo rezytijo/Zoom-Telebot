@@ -324,6 +324,9 @@ def show_help():
     print("  debug       - Run bot with debug logging")
     print("  test        - Test Python imports")
     print("  check       - Check configuration")
+    print("  test        - Test Python imports")
+    print("  check       - Check configuration")
+    print("  version     - Show version information")
     print("  help        - Show this help")
     print()
     print("OPTIONS:")
@@ -352,13 +355,15 @@ EXAMPLES:
   python dev.py run --watch        # Run bot with auto-restart
   python dev.py debug --watch      # Run with debug logs + auto-restart
   python dev.py test               # Test imports only
+  python dev.py test               # Test imports only
   python dev.py check              # Check configuration
+  python dev.py version            # Show version information
         """
     )
 
     parser.add_argument(
         'command',
-        choices=['setup', 'run', 'debug', 'test', 'check', 'help'],
+        choices=['setup', 'run', 'debug', 'test', 'check', 'version', 'help'],
         help='Command to execute'
     )
 
@@ -409,6 +414,10 @@ EXAMPLES:
 
     elif args.command == 'check':
         return 0 if check_config() else 1
+    
+    elif args.command == 'version':
+        print("Zoom-Telebot SOC v2026.02.17")
+        return 0
 
     return 0
 

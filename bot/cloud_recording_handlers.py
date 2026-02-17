@@ -7,7 +7,9 @@ from zoom import zoom_client
 from bot.auth import is_owner_or_admin, is_registered_user
 from db import get_user_by_telegram_id, get_meeting_recording_status, update_meeting_recording_status, list_meetings, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 import logging
+import logging
 import asyncio
+from bot.utils.loading import LoadingContext
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -125,8 +127,8 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
 
         # Always available actions
         kb_rows.extend([
-            [InlineKeyboardButton(text="� View Cloud Recordings", callback_data=f"view_cloud_recordings:{meeting_id}")],
-            [InlineKeyboardButton(text="�🔄️ Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
+            [InlineKeyboardButton(text="☁️ View Cloud Recordings", callback_data=f"view_cloud_recordings:{meeting_id}")],
+            [InlineKeyboardButton(text="🔄️ Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
             [InlineKeyboardButton(text="📊 Meeting Details", callback_data=f"zoom_meeting_details:{meeting_id}")],
             [InlineKeyboardButton(text="⬅️ Kembali ke Daftar", callback_data="list_meetings")]
         ])
@@ -169,6 +171,9 @@ async def cb_cloud_start_record(c: CallbackQuery):
     await c.answer("Memulai cloud recording...")
 
     try:
+        # Show loading feedback
+        loading_msg = await c.message.reply("⏳ Memulai cloud recording...")
+        
         logger.debug("cb_cloud_start_record: Sending START payload")
         success_start = await zoom_client.control_live_meeting_recording(meeting_id, "start")
         logger.debug("cb_cloud_start_record: START returned success=%s", success_start)
@@ -194,10 +199,14 @@ async def cb_cloud_start_record(c: CallbackQuery):
             # Refresh control UI to show new buttons
             await _refresh_control_zoom_ui(c, meeting_id)
             logger.debug("cb_cloud_start_record: UI refreshed")
+            
+            # Delete loading message
+            await loading_msg.delete()
             return
         else:
             text = "❌ <b>Gagal memulai cloud recording.</b> Pastikan meeting sedang berlangsung."
             logger.warning("cb_cloud_start_record: Both start and resume failed")
+            await loading_msg.delete()
 
     except Exception as e:
         logger.exception("cb_cloud_start_record: Exception occurred")
@@ -348,6 +357,8 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
     except Exception:
         pass
 
+    loading_msg = await c.message.reply("⏳ Mengambil data cloud recording...")
+
     try:
         # Try to get cached recording data first
         cached_recording_data = await get_meeting_cloud_recording_data(meeting_id)
@@ -383,6 +394,7 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
                 [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
                 [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
             ])
+            await loading_msg.delete()
             await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
             return
 
@@ -529,6 +541,7 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
         text += "⚠️ <i>Download links expire in 24 hours</i>"
 
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        await loading_msg.delete()
         await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
 
     except Exception as e:
@@ -538,4 +551,5 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
             [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
         ])
+        await loading_msg.delete()
         await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")

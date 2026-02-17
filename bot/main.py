@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 import sys
+import os
 from datetime import datetime
 from urllib.parse import urlparse
 from aiogram import Bot, Dispatcher
@@ -14,11 +15,29 @@ from bot.fsm_storage import DatabaseFSMStorage
 from db import init_db, get_user_by_telegram_id, sync_meetings_from_zoom
 from bot.middleware import LoggingMiddleware
 from bot.background_tasks import start_background_tasks, stop_background_tasks
+from bot.background_tasks import start_background_tasks, stop_background_tasks
 from zoom import zoom_client
+from scripts import check_dependencies
 
 
 logger = logging.getLogger(__name__)
 
+
+logger = logging.getLogger(__name__)
+
+# Lock file handling
+LOCK_FILE = "bot.lock"
+
+def create_lock_file():
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def remove_lock_file():
+    if os.path.exists(LOCK_FILE):
+        try:
+            os.remove(LOCK_FILE)
+        except Exception as e:
+            logger.warning(f"Failed to remove lock file: {e}")
 
 def signal_handler(signum, frame):
     """Handle system signals for graceful shutdown."""
@@ -82,6 +101,8 @@ async def on_startup(bot: Bot):
 
 
 async def main():
+    create_lock_file()
+    
     # Run environment setup first
     logger.info("Running environment setup...")
     try:
@@ -98,21 +119,21 @@ async def main():
 
     await init_db()
     # configure logging early
-    logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO), format=settings.LOG_FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
-    # Add file handler for logging to file with dynamic name
-    log_filename = f"./logs/{datetime.now().strftime('%d-%b-%Y')}-{settings.LOG_LEVEL.upper()}.log"
-    file_handler = logging.FileHandler(log_filename)
-    file_handler.setFormatter(logging.Formatter(settings.LOG_FORMAT, datefmt='%Y-%m-%d %H:%M:%S'))
-    logging.getLogger().addHandler(file_handler)
+    # Initialize logging using consolidated logger
+    from bot.logger import setup_logging
+    setup_logging()
+    
     logger.info("Initializing bot")
 
     # Register signal handlers for graceful shutdown
     try:
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
+        if sys.platform == 'win32':
+            signal.signal(signal.SIGBREAK, signal_handler)
         logger.info("Signal handlers registered for graceful shutdown")
     except (OSError, ValueError) as e:
-        # Signal handling might not be available on all platforms (e.g., Windows)
+        # Signal handling might not be available on all platforms
         logger.warning("Signal handling not available: %s", e)
 
     # Validate required settings
@@ -124,7 +145,25 @@ async def main():
     dp = Dispatcher(storage=DatabaseFSMStorage(settings.db_path))
     # Include cloud recording handlers FIRST (before generic handlers)
     dp.include_router(cloud_recording_router)
+
     dp.include_router(router)
+
+    # Dependency Audit on Startup
+    if settings.ENABLE_DEPENDENCY_AUDIT:
+        async def run_dependency_audit():
+            logger.info("Running dependency audit...")
+            report = await check_dependencies.check_dependencies()
+            if report:
+                logger.warning("Dependency Audit Issues Found:\n%s", report)
+                # Notify admin if configured
+                if settings.owner_id:
+                    try:
+                        await bot.send_message(settings.owner_id, "🚨 **Dependency Audit Alert**\n\n" + report)
+                    except Exception as e:
+                        logger.error(f"Failed to send dependency audit alert: {e}")
+        
+        # Add to startup process
+        dp.startup.register(run_dependency_audit)
 
     # Register middleware for guaranteed pre-handler logging
     dp.update.middleware(LoggingMiddleware())
@@ -144,6 +183,8 @@ async def main():
         logger.error("Unexpected error during bot operation: %s", e)
         raise
     finally:
+        remove_lock_file()
+        
         # Stop background tasks
         await stop_background_tasks()
         logger.info("Background tasks stopped")

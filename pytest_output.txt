@@ -1,0 +1,70 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\rezy0\OneDrive - Kementerian Komunikasi dan Informatika\Documents\Kantor\Program\BotTelegramZoom
+plugins: anyio-4.12.1, asyncio-1.3.0, base-url-2.1.0, html-4.0.2, metadata-3.1.1, ordering-0.6, rerunfailures-16.1, xdist-3.8.0, seleniumbase-4.46.4
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_fsm_handlers.py F                                             [100%]
+
+================================== FAILURES ===================================
+__________________________ test_create_meeting_flow ___________________________
+
+bot = <AsyncMock spec='Bot' id='1930969424160'>
+dp = <Dispatcher '0x1c196bf2660'>
+tg_user = User(id=123456789, is_bot=False, first_name='Test', last_name=None, username='testuser', language_code=None, is_premiu...None, can_connect_to_business=None, has_main_web_app=None, has_topics_enabled=None, allows_users_to_create_topics=None)
+tg_chat = Chat(id=123456789, type='private', title=None, username=None, first_name=None, last_name=None, is_forum=None, is_direc...one, profile_background_custom_emoji_id=None, slow_mode_delay=None, sticker_set_name=None, unrestrict_boost_count=None)
+
+    @pytest.mark.asyncio
+    async def test_create_meeting_flow(bot, dp, tg_user, tg_chat):
+        # Context (state) mock
+        state = AsyncMock(spec=FSMContext)
+        state.set_state = AsyncMock()
+        state.update_data = AsyncMock()
+        state.get_data = AsyncMock(return_value={})
+        state.clear = AsyncMock()
+    
+        # 1. Start Flow (CallbackQuery)
+        # mock get_user_by_telegram_id and is_registered_user
+        with patch('bot.handlers.get_user_by_telegram_id', new_callable=AsyncMock) as mock_get_user, \
+             patch('bot.handlers.is_registered_user', return_value=True):
+    
+            mock_get_user.return_value = {'telegram_id': 123456789, 'username': 'testuser', 'status': 'active'}
+    
+            callback = AsyncMock(spec=CallbackQuery)
+            callback.from_user = tg_user
+            callback.data = 'create_meeting'
+            callback.message = AsyncMock(spec=Message)
+    
+>           await cb_create_meeting(callback, state)
+
+tests\test_fsm_handlers.py:45: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+bot\handlers.py:1863: in cb_create_meeting
+    await _safe_edit_or_fallback(c, "<b>Buat Meeting - Step 1/3</b>\n<i>Silakan kirim Topic Meeting:</i>", parse_mode="HTML")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+c = <AsyncMock spec='CallbackQuery' id='1930970039696'>
+text = '<b>Buat Meeting - Step 1/3</b>\n<i>Silakan kirim Topic Meeting:</i>'
+reply_markup = None, parse_mode = 'HTML'
+
+    async def _safe_edit_or_fallback(c: CallbackQuery, text: str, reply_markup=None, parse_mode=None) -> None:
+        """Try to edit the original message. If that's not available, reply to the message or answer the callback.
+    
+        This avoids runtime/type-checker errors when CallbackQuery.message is None or doesn't expose edit_text.
+        """
+        m = getattr(c, 'message', None)
+        # If we have a real Message object from aiogram, call its coroutine methods directly
+        from aiogram.types import Message as AiMessage
+    
+        if isinstance(m, AiMessage):
+            # Prefer editing the original message. If editing fails (message too old, etc.),
+            # fall back to replying to the message.
+            try:
+>               await m.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+E               TypeError: 'MagicMock' object can't be awaited
+
+bot\handlers.py:1809: TypeError
+=========================== short test summary info ===========================
+FAILED tests/test_fsm_handlers.py::test_create_meeting_flow - TypeError: 'Mag...
+============================== 1 failed in 0.33s ==============================

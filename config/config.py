@@ -104,6 +104,9 @@ class Settings:
     fsm_ttl_seconds: int | None = _to_int(os.getenv('FSM_TTL_SECONDS')) or (
         (_to_int(os.getenv('FSM_TTL_MINUTES')) or 0) * 60 or None
     )
+    
+    # Security
+    ENABLE_DEPENDENCY_AUDIT: bool = _to_bool(os.getenv('ENABLE_DEPENDENCY_AUDIT', 'true'))
 
 
 settings = Settings()

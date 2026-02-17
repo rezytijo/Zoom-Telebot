@@ -43,7 +43,7 @@ Optional:
     parser.add_argument(
         '--version', '-v',
         action='version',
-        version='Zoom-Telebot SOC v1.0.0'
+        version='Zoom-Telebot SOC v2026.02.17'
     )
 
     parser.add_argument(
@@ -125,13 +125,6 @@ def main():
     """Main entry point with argument parsing."""
     import signal
     
-    # Suppress KeyboardInterrupt traceback
-    def signal_handler(sig, frame):
-        """Handle Ctrl+C gracefully without traceback."""
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    
     parser = create_parser()
     args = parser.parse_args()
 
@@ -144,6 +137,10 @@ def main():
     if args.log_level:
         import os
         os.environ['LOG_LEVEL'] = args.log_level
+
+    # Initialize logging
+    from bot.logger import setup_logging
+    setup_logging()
 
     # Import and run the bot
     from bot.main import main as bot_main

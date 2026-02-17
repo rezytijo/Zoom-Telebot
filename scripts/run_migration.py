@@ -24,11 +24,20 @@ from db.db import run_migrations
 import aiosqlite
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from bot.logger import setup_logging
+import os
+
+# Configure logging
+setup_logging()
 logger = logging.getLogger(__name__)
+
+LOCK_FILE = "bot.lock"
+
+def is_bot_running():
+    """Check if bot is running by looking for lock file."""
+    if os.path.exists(LOCK_FILE):
+        return True
+    return False
 
 
 async def main():
@@ -47,6 +56,12 @@ async def main():
     
     logger.info("✓ Database file found")
     logger.info("")
+
+    if is_bot_running():
+        logger.error("❌ Bot is currently running!")
+        logger.error("   A lock file '%s' was found.", LOCK_FILE)
+        logger.error("   Please stop the bot before running migrations to prevent database corruption.")
+        return 1
     
     try:
         # Open database connection

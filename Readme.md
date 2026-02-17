@@ -17,6 +17,12 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
 - **Persistent Sessions** (v2.4): User sessions disimpan ke database - lanjut dari mana user berhenti setelah bot restart!
 - **URL Shortener** (v2.4): Multi-provider dengan TinyURL API key integration (secure, tidak web scraping)
 - **Shortener Config Migration** (v2.5): Automatic migration system untuk `shorteners.json` dengan data preservation & backup
+- **System Hardening** (v2026.02.17):
+  - **Graceful Shutdown**: Support clean exit pada Windows (`SIGBREAK`) dan Linux.
+  - **Safe Migrations**: Lock file mechanism untuk mencegah concurrent database operations.
+  - **Centralized Logging**: Log terpusat dengan rotasi harian dan format konsisten.
+  - **Automated Testing**: Test suite menggunakan `pytest` untuk validasi FSM flow.
+  - **Dependency Audit**: Cek otomatis kerentanan security pada startup.
 - **Manajemen User**:
   - **Sistem Peran**: `owner`, `admin`, dan `user` dengan hak akses yang berbeda.
   - **Sistem Whitelist**: Admin dapat menyetujui (`whitelisted`), menolak, atau memblokir (`banned`) pengguna baru.
@@ -48,7 +54,17 @@ Untuk informasi lebih lengkap tentang project ini, silakan baca dokumentasi beri
 - **[🏗️ Architecture Guide](docs/ARCHITECTURE.md)** - Modular architecture dan multi-developer collaboration
 - **[🤖 AI Context Reference](context.md)** - Referensi untuk AI assistant (internal use)
 
-### **🗄️ Database & Migration**
+### **📖 Core Documentation**
+- **[📖 Overview Project](docs/README.md)** - Deskripsi lengkap bot dan fitur-fiturnya
+- **[🚀 Panduan Instalasi](docs/INSTALLATION.md)** - Cara install dan menjalankan bot (PC langsung, Docker run, Docker Compose)
+- **[💻 Development Guide](docs/DEVELOPMENT.md)** - Panduan development, testing, dan best practices
+- **[🏗️ Architecture Guide](docs/ARCHITECTURE.md)** - Modular architecture dan multi-developer collaboration
+- **[🤖 AI Context Reference](context.md)** - Referensi untuk AI assistant (internal use)
+
+### **🛡️ Security & Maintenance**
+- **Dependency Audit**: Bot otomatis mengecek vulnerability saat startup (via `pip-audit`).
+- **Log Rotation**: Logs disimpan di `logs/` dan dirotasi setiap hari (retensi 30 hari).
+- **Graceful Shutdown**: Tekan `Ctrl+C` (atau kirim `SIGTERM`) untuk mematikan bot dengan aman tanpa merusak database.
 - **[📖 Migration Index](docs/MIGRATION_INDEX.md)** - Quick navigation for all migration-related docs
 - **[📚 Complete Migration Guide](docs/DATABASE_MIGRATIONS.md)** - Comprehensive guide with examples, troubleshooting, and best practices
 - **[🔧 Schema Reference](db/schema.sql)** - Production SQL schema definition with inline documentation
@@ -139,6 +155,15 @@ Untuk informasi lebih lengkap tentang project ini, silakan baca dokumentasi beri
     python run.py --version
     ```
 
+    **Menjalankan Test Suite:**
+    ```bash
+    # Install dependencies testing
+    pip install pytest pytest-asyncio
+
+    # Jalankan test
+    python -m pytest tests/
+    ```
+
     Alternatif: Gunakan `dev.py` untuk auto-restart saat development:
     ```bash
     python dev.py run --watch
@@ -188,197 +213,152 @@ Semua konfigurasi diatur melalui file `.env`.
 Proyek ini diorganisir dalam struktur modular untuk maintainability dan scalability:
 
 ```
+```
 BotTelegramZoom/
 │
-├── 📂 bot/                    # Core Bot Logic & Handlers
+├── 📂 bot/                    # Core Bot Logic
 │   ├── __init__.py
-│   ├── main.py               # Titik masuk utama & initialization bot
-│   ├── handlers.py           # Semua message handlers, callback queries, commands
-│   ├── keyboards.py          # ReplyKeyboard & InlineKeyboard definitions
-│   ├── auth.py               # Authentication & authorization system
-│   ├── middleware.py         # Middleware untuk logging, auth checks, rate limiting
-│   ├── fsm_storage.py        # Database-backed FSM storage untuk persistent sessions
-│   └── __pycache__/
+│   ├── main.py               # Entry point & startup logic
+│   ├── handlers.py           # General message handlers & callbacks
+│   ├── cloud_recording_handlers.py # Handler khusus Cloud Recording
+│   ├── keyboards.py          # Reply & Inline keyboards
+│   ├── auth.py               # Role-based access control (RBAC)
+│   ├── middleware.py         # Logging & Auth middleware
+│   ├── fsm_storage.py        # Database-backed FSM storage
+│   ├── logger.py             # Centralized logging configuration
+│   ├── background_tasks.py   # Background task manager
+│   └── utils/
+│       └── loading.py        # Loading indicator utility
 │
-├── 📂 zoom/                   # Zoom API Integration
+├── 📂 zoom/                   # Zoom Integration
 │   ├── __init__.py
-│   ├── zoom.py               # Zoom API client (OAuth, meeting CRUD, recording)
-│   └── __pycache__/
+│   └── zoom.py               # Zoom API client
 │
 ├── 📂 db/                     # Database Layer
 │   ├── __init__.py
-│   ├── db.py                 # Database operations (user, meeting, shortener)
-│   └── __pycache__/
+│   └── db.py                 # Async SQLite operations
 │
-├── 📂 config/                 # Configuration Management
+├── 📂 config/                 # Configuration
 │   ├── __init__.py
-│   ├── config.py             # Settings dataclass, environment parsing, defaults
-│   └── __pycache__/
+│   └── config.py             # Pydantic settings management
 │
-├── 📂 c2/                     # C2 Framework Integration (Sliver)
-│   ├── __init__.py
-│   ├── sliver_zoom_c2.py     # Sliver C2 client untuk remote agent control
-│   └── __pycache__/
+├── 📂 scripts/               # Utility Scripts
+│   ├── check_dependencies.py # Security & update checker
+│   ├── run_migration.py      # Manual DB migration
+│   ├── setup.py              # Environment setup
+│   ├── dev.py                # Development runner
+│   └── ...
 │
-├── 📂 shortener/             # URL Shortener Service
-│   ├── __init__.py
-│   ├── shortener.py          # Multi-provider shortener (TinyURL, S.id, Bitly)
-│   └── __pycache__/
+├── 📂 tests/                 # Automated Tests
+│   ├── conftest.py           # Pytest fixtures
+│   └── test_fsm_handlers.py  # FSM flow tests
 │
-├── 📂 api/                    # API Server (Optional)
-│   ├── __init__.py
-│   ├── api_server.py         # FastAPI/aiohttp server untuk webhooks, API endpoints
-│   └── __pycache__/
+├── 📂 reports/               # Audit Reports
+│   ├── codebase-analysis...
+│   ├── improvement-roadmap...
+│   └── security-audit...
 │
-├── 📂 agent/                  # Agent Management (Optional)
-│   ├── __init__.py
-│   ├── todo_agent.md         # Documentation untuk agent deployment
-│   └── __pycache__/
+├── 📂 docker/                # Docker Config
+│   ├── Dockerfile
+│   └── docker-entrypoint.sh
 │
-├── 📂 scripts/               # Utility & Setup Scripts
-│   ├── __init__.py
-│   ├── setup.py              # Initial setup & environment validation
-│   └── dev.py                # Development runner (alternative untuk run.py)
+├── 📂 logs/                  # Application Logs (Rotated daily)
+├── 📂 data/                  # Persistent Data (JSON configs)
+├── 📂 docs/                  # Detailed Documentation
 │
-├── 📂 docker/                # Docker Configuration
-│   ├── __init__.py
-│   ├── Dockerfile            # Docker image definition
-│   └── docker-entrypoint.sh  # Entry point script untuk container
-│
-├── 📂 c2_server/             # C2 Server Setup (Optional)
-│   ├── admin.cfg             # C2 server admin config
-│   ├── *.bat                 # Windows batch scripts untuk setup
-│   ├── README_Windows.md     # Setup guide untuk Windows
-│   ├── implants/             # Pre-built implants (dummy_agent.bat)
-│   ├── logs/                 # C2 server logs
-│   └── generate_implants_api.py  # Script untuk generate implants
-│
-├── 📂 data/                  # Persistent Data
-│   ├── shorteners.json       # Dynamic config untuk URL shortener providers
-│   └── shorteners.json.back  # Backup shorteners.json
-│
-├── 📂 docs/                  # Documentation
-│   ├── __init__.py
-│   ├── README.md             # Project overview & quick start
-│   ├── INSTALLATION.md       # Detailed installation guide
-│   ├── DEVELOPMENT.md        # Development guide & best practices
-│   └── C2_SETUP_GUIDE.md     # Detailed C2 Framework setup
-│
-├── 📂 logs/                  # Application Logs
-│   └── *.log                 # Log files (created at runtime)
-│
-├── 📂 tests/                 # Unit Tests
-│   ├── __init__.py
-│   ├── test_c2.bat           # Windows batch untuk C2 testing
-│   ├── test_c2_integration.py # C2 integration tests
-│   ├── test_mock_agents.py   # Mock agent tests
-│   └── __pycache__/
-│
-├── 📂 __pycache__/           # Compiled Python (auto-generated)
-│
-├── 🐳 Dockerfile             # Docker image recipe
-├── 🐳 docker-compose.yml     # Docker Compose orchestration
-│
-├── 📄 .env                   # Environment variables (⚠️ create from .env.example)
-├── 📄 .env.example           # Template untuk .env dengan 30+ variables
-├── 📄 Makefile               # Shortcuts untuk Docker commands
-│
-├── 📄 run.py                 # Main entry point (polling mode)
-├── 📄 dev.py                 # Development runner dengan auto-restart
-├── 📄 demo_c2.py             # Demo script untuk C2 testing
-├── 📄 setup_c2.sh            # Shell script untuk C2 server setup
-│
-├── 📄 requirements.txt        # Python dependencies (poetry-style format)
-├── 📄 Readme.md              # Project overview (ini)
-├── 📄 context.md             # AI assistant context reference
-├── 📄 cleanup_dirs.py         # Cleanup script untuk __pycache__, logs
-└── 📄 cleanup_dirs.bat        # Windows batch cleanup script
+├── 📄 .env                   # Environment secrets
+├── 📄 requirements.txt       # Dependencies
+├── 📄 run.py                 # Production runner
+└── 📄 README.md              # Main documentation
 ```
 
 ### 📝 Deskripsi Folder & File
 
 #### **bot/** - Bot Core Logic
 Berisi semua logika bot Telegram dan handlers:
-- **main.py**: Inisialisasi bot, setup dispatcher, start polling/webhook
-- **handlers.py**: Semua message handlers (/start, /help, /meet, dll) dan callback queries
-- **keyboards.py**: Tombol dan keyboard layouts (ReplyKeyboard, InlineKeyboard)
-- **auth.py**: Sistem role-based access (owner, admin, user)
-- **middleware.py**: Pre/post processing (auth checks, logging, rate limiting)
+- **main.py**: Inisialisasi bot, setup dispatcher, start polling
+- **handlers.py**: Message handlers utama (/start, /meet, dll)
+- **cloud_recording_handlers.py**: Handler eksplisit untuk manajemen Cloud Recording
+- **keyboards.py**: Tombol dan keyboard layouts (Reply & Inline)
+- **auth.py**: Sistem role-based access (owner, admin, user) & whitelist
+- **middleware.py**: Logging request, rate limiting, dan auth checks
+- **fsm_storage.py**: Custom storage agar session user persist di database
+- **logger.py**: Konfigurasi logging terpusat (console + file rotation)
+- **background_tasks.py**: Task manager untuk sync Zoom, cleanup, dll
+- **utils/loading.py**: Utility untuk menampilkan status "Processing..."
 
 #### **zoom/** - Zoom API Integration
 Klien untuk berkomunikasi dengan Zoom API:
-- **zoom.py**: OAuth token management, meeting CRUD, recording control, auto-sync
+- **zoom.py**: OAuth s2s, meeting CRUD logic, recording management
 
-#### **db/** - Database Operations
-Data layer untuk SQLite/PostgreSQL:
-- **db.py**: User management, meeting storage, shortener URLs
+#### **db/** - Database Layer
+Abstraksi database SQLite (asynchronous):
+- **db.py**: Semua query SQL untuk users, meetings, shortlinks
 
-#### **config/** - Configuration Management
-Parsing dan validasi environment variables:
-- **config.py**: Settings dataclass dengan defaults, environment parsing, type safety
+#### **config/** - Configuration
+- **config.py**: Validasi environment variables menggunakan Pydantic
 
-#### **c2/** - C2 Framework (Sliver)
-Integrasi dengan Sliver C2 Framework untuk remote agent control:
-- **sliver_zoom_c2.py**: Client untuk mTLS communication dengan C2 server, agent commands
+#### **shortener/** - URL Shortener Service
+- **shortener.py**: Logic multi-provider (TinyURL, S.id, Bitly)
 
-#### **shortener/** - URL Shortener
-Multi-provider URL shortener service:
-- **shortener.py**: Support TinyURL, S.id, Bitly dengan dynamic provider config
+#### **scripts/** - Utilities & Maintenance
+Script pembantu untuk operasi dan maintenance:
+- **run_migration.py**: Eksekusi update schema database secara manual
+- **check_dependencies.py**: Audit security & update library
+- **setup.py**: Validasi environment sebelum start
+- **migrate_shorteners.py**: Tool migrasi config shortener (legacy)
 
-#### **api/** - API Server (Optional)
-Webhook dan REST API endpoints:
-- **api_server.py**: FastAPI/aiohttp server untuk webhook events, external API
+#### **tests/** - Automated Testing
+Test suite untuk validasi stabilitas:
+- **test_fsm_handlers.py**: Test flow pembuatan meeting (Topic > Date > Time)
+- **conftest.py**: Konfigurasi fixtures untuk pytest
 
-#### **c2_server/** - C2 Server Setup
-C2 Framework server configuration dan utilities:
-- **admin.cfg**: C2 server admin configuration
-- **generate_implants_api.py**: Otomasi pembuatan implants (agents)
-- **implants/**: Pre-built agent executables
+#### **reports/** - Project Audit
+Laporan analisis codebase (Generated by AI):
+- **codebase-analysis-report.md**: Overview kualitas & arsitektur
+- **improvement-roadmap.md**: Rencana perbaikan sistem
+- **security-audit.md**: Hasil audit keamanan
 
 #### **data/** - Persistent Data
-Data files yang disimpan di disk:
-- **shorteners.json**: Dynamic config untuk URL shortener providers (tambah provider tanpa code change)
+Data JSON yang perlu persistensi:
+- **shorteners.json**: Konfigurasi dynamic shortener
 
-#### **docs/** - Documentation
-Lengkap dokumentasi project:
-- **INSTALLATION.md**: Setup lokal, Docker, Docker Compose
-- **DEVELOPMENT.md**: Development workflow, testing, best practices
-- **C2_SETUP_GUIDE.md**: Detail setup Sliver C2 framework
-- **API.md**: API endpoints documentation
-- **API_TESTING_GUIDE.md**: Testing guide untuk API
-
-#### **tests/** - Unit Tests
-Test suite untuk validasi functionality:
-- **test_c2_integration.py**: Tests untuk C2 integration
-- **test_mock_agents.py**: Mock agent tests
+#### **logs/** - Application Logs
+Folder tempat log file disimpan (rotasi harian `zoom-telebot.YYYY-MM-DD.log`)
 
 ### 🔄 Data Flow
 
 ```
-┌──────────────────────┐
-│   Telegram User      │
-└──────────────┬───────┘
-             │
-             ▼
-┌──────────────────────────────────────────────────────────────────┐
-│   bot/handlers.py           │ ← Receive & process user input
-├──────────────────────────────────────────────────────────────────┤
-│  • /start, /help            │
-│  • /meet (create meeting)   │
-│  • /zoom_control (agent)    │
-│  • Callbacks (keyboards)    │
-└──────────────────┬──────┬──────┬──────────────────────────────┘
-                  │      │      │
-            ┌─────┴──┐  │  ┌─────┴──┐
-            ▼        ▼  ▼  ▼        ▼
-       ┌────────────┐ ┌──────────────┐ ┌──────────────┐
-       │ db/db.py   │ │ zoom/zoom.py │ │ c2/sliver    │
-       └──────┬─────┘ └────────┬─────┘ └──────┬───────┘
-              ▼                ▼               ▼
-         ┌─────────────┐ ┌──────────┐  ┌──────────────┐
-         │ SQLite/     │ │ Zoom API │  │ C2 Server    │
-         │ PostgreSQL  │ │ (OAuth)  │  │ (mTLS)       │
-         └─────────────┘ └──────────┘  └──────────────┘
+                                  ┌─────────────────┐
+                                  │  Telegram User  │
+                                  └────────┬────────┘
+                                           │
+                                           ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  Bot Engine (bot/)                                                              │
+│                                                                                 │
+│  ┌──────────────────┐    ┌───────────────────────────────────────────────┐      │
+│  │ middleware.py    │──▶ │ handlers.py / keybords.py                     │      │
+│  │ (Auth/Log/Rate)  │    │ (Command Processing & Logic)                  │      │
+│  └──────────────────┘    └──────┬────────────┬─────────────┬─────────────┘      │
+│                                 │            │             │                    │
+│                                 ▼            ▼             ▼                    │
+│                          ┌──────────┐  ┌──────────┐  ┌──────────────┐           │
+│                          │ db/db.py │  │ auth.py  │  │ shortener/   │           │
+│                          └────┬─────┘  └──────────┘  └─────┬────────┘           │
+│                               │                            │                    │
+│  ┌──────────────────┐         │                            │                    │
+│  │ background_tasks │─────────┤                            ▼                    │
+│  │ (Sync/Cleanup)   │         ▼                      ┌──────────────┐           │
+│  └─────────┬────────┘    ┌──────────┐                │ External APIs│           │
+│            │             │ SQLite   │                │ (TinyURL/etc)│           │
+│            │             └──────────┘                └──────────────┘           │
+│            │                                                                    │
+│            ▼                                                                    │
+│      ┌────────────┐                                                             │
+│      │ zoom/      │ ◀──(OAuth S2S)──▶  [ Zoom API ]                            │
+│      └────────────┘                                                             │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 🔐 Security Layers
@@ -393,12 +373,7 @@ Test suite untuk validasi functionality:
    - Rate limiting untuk prevent abuse
    - Request/response logging
 
-3. **C2 Security (c2/sliver_zoom_c2.py)**:
-   - mTLS encryption untuk agent communication
-   - Token-based authentication
-   - Real-time agent status monitoring
-
-4. **Database Security (db/db.py)**:
+3. **Database Security (db/db.py)**:
    - Prepared statements untuk prevent SQL injection
    - User role validation
    - Data encryption untuk sensitive info
@@ -422,11 +397,31 @@ python dev.py run --watch   # Auto-restart on file changes
 DEFAULT_MODE=webhook        # Webhook untuk Telegram updates
 DATABASE_URL=postgresql://  # PostgreSQL production
 LOG_LEVEL=INFO              # Normal logging
-C2_ENABLED=true             # C2 Framework aktif
+
 
 # Runner
 docker compose up -d        # Docker Compose orchestration
 ```
+
+## ✨ Recent Updates (February 2026)
+
+### Version v2026.02.17 - System Hardening & Security Audit
+
+#### 🆕 System Hardening
+- **Graceful Shutdown**: Implementasi signal handling yang robust untuk Windows (`SIGBREAK`) dan Linux. Memastikan `bot.lock` terhapus saat exit.
+- **Safe Migrations**: Mencegah race condition saat startup dengan mekanisme lock file.
+- **Centralized Logging**: Standardisasi logging ke `logs/` dengan rotasi harian.
+- **Loading Indicators**: Feedback "⏳ Processing..." yang konsisten untuk operasi lama (Zoom sync, PDF generation).
+
+#### 🛡️ Security Audit
+- **Dependency Checker**: Script otomatis `scripts/check_dependencies.py` yang berjalan saat startup untuk mendeteksi library yang vuln (menggunakan `pip-audit`).
+- **Alert System**: Notifikasi ke Admin jika ditemukan critical vulnerability.
+
+#### 🧪 Automated Testing
+- **FSM Tests**: Test suite awal untuk memvalidasi alur pembuatan meeting (Topic -> Date -> Time).
+- **Test Runner**: Integrasi dengan `pytest` dan `pytest-asyncio`.
+
+---
 
 ## ✨ Recent Updates (December 2025)
 
@@ -487,7 +482,7 @@ python scripts/demo_migration.py                # Learn about migration
 
 **Configuration**:
 ```bash
-TINYURL_API_KEY=1dChPWi1S8H1dTzTXbDdc95HT55dqKiUhKagsnFgMQ6BHt4D56EJcGvsrQye
+TINYURL_API_KEY=qwertyuiolkjhgfdsqwertyuiopmkjnhbgvfcds
 TINYURL_API_URL=https://api.tinyurl.com/create
 ```
 
