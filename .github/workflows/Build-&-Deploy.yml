@@ -48,7 +48,7 @@ jobs:
         with:
           tag_name: ${{ steps.date.outputs.tag_name }}
           name: ${{ steps.date.outputs.release_name }}
-          generate_release_notes: true
+          body: ${{ github.event.head_commit.message }}
           draft: false
           prerelease: false
         env:
