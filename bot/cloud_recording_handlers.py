@@ -23,12 +23,15 @@ async def _safe_edit_or_fallback(c: CallbackQuery, text: str, reply_markup=None,
     m = getattr(c, 'message', None)
     
     if isinstance(m, AiMessage):
+        kwargs = {'reply_markup': reply_markup}
+        if parse_mode is not None:
+            kwargs['parse_mode'] = parse_mode
         try:
-            await m.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+            await m.edit_text(text, **kwargs)
             return
         except TelegramBadRequest:
             try:
-                await m.reply(text, reply_markup=reply_markup, parse_mode=parse_mode)
+                await m.reply(text, **kwargs)
                 return
             except Exception:
                 logger.debug("_edit_or_fallback: reply() failed, falling back to callback answer")

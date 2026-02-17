@@ -1798,8 +1798,12 @@ async def _safe_edit_or_fallback(c: CallbackQuery, text: str, reply_markup=None,
     if isinstance(m, AiMessage):
         # Prefer editing the original message. If editing fails (message too old, etc.),
         # fall back to replying to the message.
+        kwargs = {'reply_markup': reply_markup}
+        if parse_mode is not None:
+            kwargs['parse_mode'] = parse_mode
+
         try:
-            await m.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+            await m.edit_text(text, **kwargs)
             return
         except TelegramBadRequest as e:
             # If message content identical, avoid sending a new message
@@ -1811,7 +1815,7 @@ async def _safe_edit_or_fallback(c: CallbackQuery, text: str, reply_markup=None,
                 return
             # couldn't edit (maybe too old or protected), try to reply instead
             try:
-                await m.reply(text, reply_markup=reply_markup, parse_mode=parse_mode)
+                await m.reply(text, **kwargs)
                 return
             except Exception:
                 # fall through to answering the callback below
