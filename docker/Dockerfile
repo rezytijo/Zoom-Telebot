@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app user
-RUN groupadd -r botuser && useradd -r -g botuser botuser
+# Create app user with home directory
+RUN groupadd -r botuser && useradd -r -g botuser -m -d /home/botuser botuser
 
 # Set work directory
 WORKDIR /app

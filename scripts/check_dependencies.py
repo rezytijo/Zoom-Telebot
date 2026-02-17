@@ -35,7 +35,7 @@ async def check_dependencies():
             try:
                 audit_data = json.loads(result.stdout)
                 if audit_data:
-                    report.append("🚨 **SECURITY VULNERABILITIES FOUND:**")
+                    report.append("🚨 <b>SECURITY VULNERABILITIES FOUND:</b>")
                     for item in audit_data:
                         # Depends on pip-audit version, structure might vary. 
                         # Usually list of {package, version, vulns: [{id, aliases, fix_versions}]}
@@ -46,7 +46,7 @@ async def check_dependencies():
                         vuln_ids = ", ".join([v.get('id') for v in vulns])
                         fix_vers = ", ".join([str(v.get('fix_versions', [])) for v in vulns])
                         
-                        report.append(f"- `{pkg}` ({ver}): {vuln_ids}. Fix: {fix_vers}")
+                        report.append(f"- <code>{pkg}</code> ({ver}): {vuln_ids}. Fix: {fix_vers}")
                     report.append("")
             except json.JSONDecodeError:
                 # If stdout isn't JSON, maybe it failed strictly
@@ -72,12 +72,12 @@ async def check_dependencies():
         if result.returncode == 0:
             outdated = json.loads(result.stdout)
             if outdated:
-                report.append("📦 **OUTDATED PACKAGES:**")
+                report.append("📦 <b>OUTDATED PACKAGES:</b>")
                 for item in outdated:
                     pkg = item.get('name')
                     curr = item.get('version')
-                    latest = item.get('latest')
-                    report.append(f"- `{pkg}`: {curr} -> {latest}")
+                    latest = item.get('latest') or "Unknown"
+                    report.append(f"- <code>{pkg}</code>: {curr} -> {latest}")
                 report.append("")
         else:
             logger.error(f"pip list outdated failed: {result.stderr}")

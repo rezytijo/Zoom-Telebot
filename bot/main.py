@@ -158,7 +158,7 @@ async def main():
                 # Notify admin if configured
                 if settings.owner_id:
                     try:
-                        await bot.send_message(settings.owner_id, "🚨 **Dependency Audit Alert**\n\n" + report)
+                        await bot.send_message(settings.owner_id, "🚨 <b>Dependency Audit Alert</b>\n\n" + report, parse_mode="HTML")
                     except Exception as e:
                         logger.error(f"Failed to send dependency audit alert: {e}")
         
