@@ -6,11 +6,6 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from typing import Optional, List, Dict
 
-def escape_md(text: str) -> str:
-    """Escape special characters for Markdown v2."""
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
-
 from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons, main_menu_keyboard, meetings_menu_keyboard, users_menu_keyboard, backup_menu_keyboard, info_menu_keyboard, shortener_menu_keyboard
 from config import settings
@@ -300,7 +295,7 @@ async def cmd_whoami(msg: Message):
         f"Your username: <code>{username or '-'}</code>\n"
         f"Is owner: <code>{is_owner}</code>"
     )
-    await msg.reply(text, parse_mode="HTML")
+    await msg.reply(text)
 
 
 # ==========================================
@@ -423,7 +418,7 @@ async def cb_control_zoom(c: CallbackQuery):
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
     await c.answer()
 
 
@@ -456,7 +451,7 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
             ])
-            await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+            await _safe_edit_or_fallback(c, text, reply_markup=kb)
             return
         
         # Start the meeting via Zoom API
@@ -500,7 +495,7 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
         ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('end_zoom_meeting:'))
@@ -534,7 +529,7 @@ async def cb_end_zoom_meeting(c: CallbackQuery):
         [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('mute_all_participants:'))
@@ -558,7 +553,7 @@ async def cb_mute_all_participants(c: CallbackQuery):
             [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{c.data.split(':', 1)[1]}")],
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
         ])
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
         return
 
     meeting_id = c.data.split(':', 1)[1]
@@ -580,7 +575,7 @@ async def cb_mute_all_participants(c: CallbackQuery):
         [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('zoom_meeting_details:'))
@@ -639,7 +634,7 @@ async def cb_zoom_meeting_details(c: CallbackQuery):
         [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 # ==========================================
@@ -732,7 +727,7 @@ async def cb_manage_meeting(c: CallbackQuery):
             [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
         ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
     await c.answer()
 
 
@@ -836,7 +831,7 @@ async def cb_control_meeting(c: CallbackQuery, state: FSMContext):
     
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
     await c.answer()
 
 
@@ -914,7 +909,7 @@ async def cb_agent_start(c: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
         ])
         
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
         
     except Exception as e:
         logger.exception("Failed to queue command for agent %s: %s", agent_id, e)
@@ -960,7 +955,7 @@ async def cb_start_meeting(c: CallbackQuery):
         f"Link meeting: {join_url}"
     )
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
     await c.answer()
 
 
@@ -970,7 +965,7 @@ async def cb_confirm_stop(c: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Ya, End Meeting (Server)", callback_data=f"stop_meeting:{meeting_id}"), InlineKeyboardButton(text="❌ Batal", callback_data=f"manage_meeting:{meeting_id}")]
     ])
-    await _safe_edit_or_fallback(c, f"Apakah Anda yakin ingin mengakhiri meeting <code>{meeting_id}</code>?", reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, f"Apakah Anda yakin ingin mengakhiri meeting <code>{meeting_id}</code>?", reply_markup=kb)
     await c.answer()
 
 
@@ -1011,7 +1006,7 @@ async def cb_stop_meeting(c: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
             ])
             
-            await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+            await _safe_edit_or_fallback(c, text, reply_markup=kb)
             
     except Exception as e:
         logger.exception("Failed to end meeting %s: %s", meeting_id, e)
@@ -1031,7 +1026,7 @@ async def cb_stop_meeting(c: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
         ])
         
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('manage_meeting:'), ZoomManageStates.controlling_meeting)
@@ -1050,7 +1045,7 @@ async def cb_confirm_delete(c: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Ya, Hapus Meeting", callback_data=f"delete_meeting:{meeting_id}"), InlineKeyboardButton(text="❌ Batal", callback_data=f"manage_meeting:{meeting_id}")]
     ])
-    await _safe_edit_or_fallback(c, f"Konfirmasi: hapus meeting <code>{meeting_id}</code>? Ini akan menghapus meeting dari Zoom.", reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, f"Konfirmasi: hapus meeting <code>{meeting_id}</code>? Ini akan menghapus meeting dari Zoom.", reply_markup=kb)
     await c.answer()
 
 
@@ -1121,7 +1116,7 @@ async def cb_edit_meeting(c: CallbackQuery, state: FSMContext):
         f"Kirimkan topik meeting yang baru, atau klik tombol di bawah untuk melewati langkah ini."
     )
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
     await state.set_state(ZoomEditStates.waiting_for_topic)
     await c.answer()
 
@@ -1138,7 +1133,7 @@ async def edit_meeting_topic(msg: Message, state: FSMContext):
         [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
     ])
     
-    await msg.reply("Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", parse_mode="HTML", reply_markup=kb)
+    await msg.reply("Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", reply_markup=kb)
     await state.set_state(ZoomEditStates.waiting_for_date)
 
 
@@ -1155,7 +1150,7 @@ async def edit_meeting_date(msg: Message, state: FSMContext):
         [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
     ])
     
-    await msg.reply("Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", parse_mode="HTML", reply_markup=kb)
+    await msg.reply("Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", reply_markup=kb)
     await state.set_state(ZoomEditStates.waiting_for_time)
 
 
@@ -1223,7 +1218,7 @@ async def cb_skip_topic(c: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
     ])
     
-    await _safe_edit_or_fallback(c, "Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", parse_mode="HTML", reply_markup=kb)
+    await _safe_edit_or_fallback(c, "Silakan kirim <b>tanggal</b> baru (format: DD-MM-YYYY atau '31 Desember 2025').", reply_markup=kb)
     await state.set_state(ZoomEditStates.waiting_for_date)
     await c.answer()
 
@@ -1242,7 +1237,7 @@ async def cb_skip_date(c: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🏠 Kembali", callback_data="list_meetings")]
     ])
     
-    await _safe_edit_or_fallback(c, "Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", parse_mode="HTML", reply_markup=kb)
+    await _safe_edit_or_fallback(c, "Silakan kirim <b>waktu</b> baru (format 24-jam, contoh: 14:30).", reply_markup=kb)
     await state.set_state(ZoomEditStates.waiting_for_time)
     await c.answer()
 
@@ -1290,7 +1285,7 @@ async def cb_skip_time(c: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")],
             [InlineKeyboardButton(text="🏠 Menu Utama", callback_data="back_to_main")]
         ])
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
     except Exception as e:
         logger.exception("Failed to update meeting %s: %s", meeting_id, e)
         text = f"❌ Gagal memperbarui meeting: {e}"
@@ -1298,7 +1293,7 @@ async def cb_skip_time(c: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")],
             [InlineKeyboardButton(text="🏠 Menu Utama", callback_data="back_to_main")]
         ])
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
     await state.clear()
     await c.answer()
@@ -1377,7 +1372,7 @@ async def cb_pause_record(c: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🏠 Kembali ke Manage", callback_data=f"manage_meeting:{meeting_id}")]
         ])
         
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
         await c.answer()
         return
     
@@ -1424,7 +1419,6 @@ async def _send_help_message(chat_id: int, bot: Bot, text: str) -> None:
                 chat_id=chat_id,
                 message_id=prev_id,
                 reply_markup=back_to_main_buttons(),
-                parse_mode="HTML",
             )
             return
         except TelegramBadRequest as e:
@@ -1436,7 +1430,6 @@ async def _send_help_message(chat_id: int, bot: Bot, text: str) -> None:
     sent = await bot.send_message(
         chat_id,
         text,
-        parse_mode="HTML",
         reply_markup=back_to_main_buttons(),
     )
     LAST_HELP_MESSAGE[chat_id] = sent.message_id
@@ -1481,7 +1474,7 @@ async def cmd_help(msg: Message):
 
     await _send_help_message(msg.chat.id, msg.bot, help_text)
 
-    await msg.reply(help_text, reply_markup=back_to_main_new_buttons(), parse_mode="HTML")
+    await msg.reply(help_text, reply_markup=back_to_main_new_buttons())
 
 
 @router.message(Command("about"))
@@ -1495,7 +1488,7 @@ async def cmd_about(msg: Message):
         "Dibuat untuk meningkatkan produktivitas tim SOC dalam menangani insiden keamanan.\n\n"
         "<i>Versi 1.0 - Oktober 2025</i>"
     )
-    await msg.reply(about_text, reply_markup=back_to_main_new_buttons(), parse_mode="HTML")
+    await msg.reply(about_text, reply_markup=back_to_main_new_buttons())
 
 
 @router.message(Command("meet"))
@@ -1615,7 +1608,7 @@ async def cmd_zoom(msg: Message):
     if len(results) > 10:
         summary += f"\n... dan {len(results) - 10} hasil lainnya"
 
-    await msg.reply(summary, reply_markup=back_to_main_new_buttons(), parse_mode="HTML")
+    await msg.reply(summary, reply_markup=back_to_main_new_buttons())
 
     # If there were successful creations, show all meetings in one message with greeting format
     if successful > 0:
@@ -1682,7 +1675,7 @@ async def cmd_zoom(msg: Message):
         # Create keyboard
         kb = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons) if keyboard_buttons else None
         
-        await msg.reply(text, reply_markup=kb, parse_mode="HTML")
+        await msg.reply(text, reply_markup=kb)
 @router.message(Command("sync_meetings"))
 async def cmd_sync_meetings(msg: Message):
     """Manually sync meetings from Zoom to database (owner only)."""
@@ -1708,10 +1701,10 @@ async def cmd_sync_meetings(msg: Message):
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Sistem otomatis mensinkronkan setiap 30 menit dan saat startup.</i>"
         )
-        await msg.reply(text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await msg.reply(text, reply_markup=back_to_main_buttons())
     except Exception as e:
         logger.exception("Manual sync failed: %s", e)
-        await msg.reply(f"❌ <b>Gagal melakukan sinkronisasi:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await msg.reply(f"❌ <b>Gagal melakukan sinkronisasi:</b> {e}", reply_markup=back_to_main_buttons())
 
 
 @router.message(Command("check_expired"))
@@ -1736,10 +1729,10 @@ async def cmd_check_expired(msg: Message):
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai done.</i>"
         )
-        await msg.reply(text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await msg.reply(text, reply_markup=back_to_main_buttons())
     except Exception as e:
         logger.exception("Manual expiry check failed: %s", e)
-        await msg.reply(f"❌ <b>Gagal memeriksa done meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await msg.reply(f"❌ <b>Gagal memeriksa done meetings:</b> {e}", reply_markup=back_to_main_buttons())
 
 
 @router.message(Command("start"))
@@ -1768,7 +1761,7 @@ async def cmd_start(msg: Message):
                 f"Username Telegram : <code>{msg.from_user.username or '-'}</code>\n"
                 f"User ID Telegram : <code>{msg.from_user.id}</code>\n"
             )
-            await msg.reply(text, parse_mode="HTML")
+            await msg.reply(text)
             return
 
     if is_allowed_to_create(user):
@@ -1786,11 +1779,11 @@ async def cmd_start(msg: Message):
         # Get main menu keyboard based on user role
         kb = main_menu_keyboard(user.get('role', 'user'))
 
-        await msg.answer(greeting_text, reply_markup=kb, parse_mode="HTML")
+        await msg.answer(greeting_text, reply_markup=kb)
     elif user and user.get('status') == 'banned':
-        await msg.reply("<i>Anda dibanned dari menggunakan bot ini.</i>", parse_mode="HTML")
+        await msg.reply("<i>Anda dibanned dari menggunakan bot ini.</i>")
     else:
-        await msg.reply("<i>Permintaan Anda sedang menunggu persetujuan.</i>", parse_mode="HTML")
+        await msg.reply("<i>Permintaan Anda sedang menunggu persetujuan.</i>")
 
 
 async def _safe_edit_or_fallback(c: CallbackQuery, text: str, reply_markup=None, parse_mode=None) -> None:
@@ -1860,7 +1853,7 @@ async def cb_create_meeting(c: CallbackQuery, state: FSMContext):
         return
 
     logger.info("Starting meeting creation flow for user %s", c.from_user.id)
-    await _safe_edit_or_fallback(c, "<b>Buat Meeting - Step 1/3</b>\n<i>Silakan kirim Topic Meeting:</i>", parse_mode="HTML")
+    await _safe_edit_or_fallback(c, "<b>Buat Meeting - Step 1/3</b>\n<i>Silakan kirim Topic Meeting:</i>")
     await state.set_state(MeetingStates.topic)
     await c.answer()
 
@@ -1873,7 +1866,7 @@ async def meeting_topic(msg: Message, state: FSMContext):
 
     logger.debug("meeting_topic received: %s", msg.text)
     await state.update_data(topic=msg.text.strip())
-    await msg.reply("<b>Step 2/3</b>\n<i>Kapan diadakan?</i>\nFormat: <code>DD-MM-YYYY</code> atau '<code>31-12-2025</code>' atau tulis seperti '<code>31 Desember 2025</code>' (Bulan dalam bahasa Indonesia).", parse_mode="HTML")
+    await msg.reply("<b>Step 2/3</b>\n<i>Kapan diadakan?</i>\nFormat: <code>DD-MM-YYYY</code> atau '<code>31-12-2025</code>' atau tulis seperti '<code>31 Desember 2025</code>' (Bulan dalam bahasa Indonesia).")
     await state.set_state(MeetingStates.date)
 
 
@@ -1889,7 +1882,7 @@ async def meeting_date(msg: Message, state: FSMContext):
         return
     logger.debug("meeting_date parsed: %s -> %s", msg.text, d)
     await state.update_data(date=str(d))
-    await msg.reply("<b>Step 3/3</b>\n<i>Masukkan waktu (format 24-jam WIB) contohnya:</i> <code>14:30</code>", parse_mode="HTML")
+    await msg.reply("<b>Step 3/3</b>\n<i>Masukkan waktu (format 24-jam WIB) contohnya:</i> <code>14:30</code>")
     await state.set_state(MeetingStates.time)
 
 
@@ -1941,7 +1934,7 @@ async def meeting_time(msg: Message, state: FSMContext):
         "Tekan <b>Konfirmasi</b> untuk membuat meeting di Zoom, atau <b>Batal</b> untuk membatalkan."
     )
     # reply with keyboard and set confirm state
-    await msg.reply(text, reply_markup=kb, parse_mode="HTML")
+    await msg.reply(text, reply_markup=kb)
     await state.set_state(MeetingStates.confirm)
 
 
@@ -1957,7 +1950,7 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
 
     # edit message to show progress
     logger.info("User %s confirmed meeting creation", getattr(c.from_user, 'id', None))
-    await _safe_edit_or_fallback(c, "<b>Membuat meeting... Mohon tunggu.</b>", parse_mode="HTML")
+    await _safe_edit_or_fallback(c, "<b>Membuat meeting... Mohon tunggu.</b>")
 
     # create meeting via Zoom API
     user_id = 'me'  # default to 'me' if no specific user configured
@@ -1967,7 +1960,7 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
         logger.info("Meeting created: %s", meeting.get('id') or meeting)
     except Exception as e:
         logger.exception("Failed to create meeting: %s", e)
-        await _safe_edit_or_fallback(c, f"<b>❌ Gagal membuat meeting:</b> {e}", parse_mode="HTML")
+        await _safe_edit_or_fallback(c, f"<b>❌ Gagal membuat meeting:</b> {e}")
         await state.clear()
         await c.answer("Gagal membuat meeting")
         return
@@ -2004,12 +1997,12 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
         greeting = 'Selamat malam'
 
     text = (
-        f"**{greeting} Bapak/Ibu/Rekan-rekan**\n"
-        f"**Berikut disampaikan Kegiatan {topic} pada:**\n\n"
+        f"<b>{greeting} Bapak/Ibu/Rekan-rekan</b>\n"
+        f"<b>Berikut disampaikan Kegiatan {html.escape(topic)} pada:</b>\n\n"
         f"📆  {disp_date}\n"
         f"⏰  {disp_time} WIB – selesai\n"
         f"🔗  {join}\n\n"
-        "**Demikian disampaikan, terimakasih.**"
+        "<b>Demikian disampaikan, terimakasih.</b>"
     )
 
     # prepare Short URL button using a temporary token
@@ -2032,7 +2025,7 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔗 Buat Short URL", callback_data=f"shorten:{token}")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="Markdown")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
     await state.clear()
     await c.answer("Meeting dibuat")
@@ -2049,7 +2042,7 @@ async def cb_cancel_create(c: CallbackQuery, state: FSMContext):
 
     # Only allow the user who started the flow to cancel (FSM is per-user but double-check)
     logger.info("User %s cancelled meeting creation", getattr(c.from_user, 'id', None))
-    await _safe_edit_or_fallback(c, "<b>❌ Pembuatan meeting dibatalkan.</b>", reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, "<b>❌ Pembuatan meeting dibatalkan.</b>", reply_markup=kb)
     await state.clear()
     await c.answer()
 
@@ -2139,7 +2132,7 @@ async def _do_list_meetings(c: CallbackQuery):
             m = getattr(c, 'message', None)
             if isinstance(m, AiMessage):
                 try:
-                    await m.edit_text(text, parse_mode="HTML", reply_markup=list_meetings_buttons())
+                    await m.edit_text(text, reply_markup=list_meetings_buttons())
                 except Exception:
                     await c.answer("Tidak ada meeting aktif/selesai")
             else:
@@ -2258,7 +2251,7 @@ async def _do_list_meetings(c: CallbackQuery):
         m = getattr(c, 'message', None)
         if isinstance(m, AiMessage):
             try:
-                await m.edit_text(text, parse_mode="HTML", reply_markup=kb)
+                await m.edit_text(text, reply_markup=kb)
             except Exception:
                 await c.answer("Gagal refresh daftar meeting, coba lagi")
         else:
@@ -2270,7 +2263,7 @@ async def _do_list_meetings(c: CallbackQuery):
         m = getattr(c, 'message', None)
         if isinstance(m, AiMessage):
             try:
-                await m.edit_text(f"❌ <b>Gagal mengambil daftar meeting:</b> {e}", parse_mode="HTML", reply_markup=list_meetings_buttons())
+                await m.edit_text(f"❌ <b>Gagal mengambil daftar meeting:</b> {e}", reply_markup=list_meetings_buttons())
             except Exception:
                 await c.answer("Gagal refresh daftar meeting")
         else:
@@ -2411,7 +2404,7 @@ async def cb_list_cloud_recordings(c: CallbackQuery):
         m = getattr(c, 'message', None)
         if isinstance(m, AiMessage):
             try:
-                await m.edit_text(text, parse_mode="HTML", reply_markup=kb)
+                await m.edit_text(text, reply_markup=kb)
             except Exception:
                 await c.answer()  # Silent callback acknowledgment only
         else:
@@ -2437,7 +2430,7 @@ async def cb_search_user(c: CallbackQuery, state: FSMContext):
     await c.answer()
     text = """🔎 <b>Pencarian User</b>
 Silakan masukkan username atau Telegram ID yang ingin Anda cari:"""
-    await _safe_edit_or_fallback(c, text, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text)
     await state.set_state(UserSearchStates.waiting_for_query)
 
 
@@ -2454,8 +2447,8 @@ async def process_user_search_query(msg: Message, state: FSMContext):
     # Search for users
     users = await search_users(query)
     if not users:
-        text = f"❌ **Tidak ada hasil** untuk pencarian: `{escape_md(query)}`"
-        await msg.reply(text, reply_markup=back_to_main_new_buttons(), parse_mode="MarkdownV2")
+        text = f"❌ <b>Tidak ada hasil</b> untuk pencarian: <code>{html.escape(query)}</code>"
+        await msg.reply(text, reply_markup=back_to_main_new_buttons())
         return
 
     # Limit to 10 users to prevent message too long
@@ -2464,21 +2457,21 @@ async def process_user_search_query(msg: Message, state: FSMContext):
         # Check if there are more
         all_users = await search_users(query)
         if len(all_users) > 10:
-            text = f"✅ **Hasil Pencarian untuk:** `{escape_md(query)}` \\(Menampilkan 10 hasil pertama dari {len(all_users)} total\\)\n\n"
+            text = f"✅ <b>Hasil Pencarian untuk:</b> <code>{html.escape(query)}</code> (Menampilkan 10 hasil pertama dari {len(all_users)} total)\n\n"
         else:
-            text = f"✅ **Hasil Pencarian untuk:** `{escape_md(query)}`\n\n"
+            text = f"✅ <b>Hasil Pencarian untuk:</b> <code>{html.escape(query)}</code>\n\n"
     else:
-        text = f"✅ **Hasil Pencarian untuk:** `{escape_md(query)}`\n\n"
+        text = f"✅ <b>Hasil Pencarian untuk:</b> <code>{html.escape(query)}</code>\n\n"
     buttons = []
     for u in users:
         username = u.get('username') or f"ID_{u.get('telegram_id')}"
         role = u.get('role', 'guest')
         status = u.get('status', 'pending')
         telegram_id = u.get('telegram_id')
-        text += f"👤 @{escape_md(username)}\n"
-        text += f"   ├─ ID: `{escape_md(str(telegram_id))}`\n"
-        text += f"   ├─ Role: {escape_md(role.capitalize())}\n"
-        text += f"   └─ Status: {escape_md(status.capitalize())}\n\n"
+        text += f"👤 @{html.escape(username)}\n"
+        text += f"   ├─ ID: <code>{telegram_id}</code>\n"
+        text += f"   ├─ Role: {html.escape(role.capitalize())}\n"
+        text += f"   └─ Status: {html.escape(status.capitalize())}\n\n"
         buttons.append([
             InlineKeyboardButton(
                 text=f"⚙️ Kelola @{username}",
@@ -2489,7 +2482,7 @@ async def process_user_search_query(msg: Message, state: FSMContext):
     buttons.append([InlineKeyboardButton(text="🏠 Kembali ke Menu Utama", callback_data="back_to_main_new")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    await msg.reply(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+    await msg.reply(text, reply_markup=keyboard)
 
 @router.callback_query(lambda c: c.data == 'short_url')
 async def cb_short_url(c: CallbackQuery, state: FSMContext):
@@ -2505,7 +2498,7 @@ async def cb_short_url(c: CallbackQuery, state: FSMContext):
 
     await c.answer()
     text = "<b>🔗 Short URL Generator - Step 1/4</b>\n\nKirim URL yang ingin Anda persingkat:\n(contoh: https://example.com)"
-    await _safe_edit_or_fallback(c, text, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text)
     await state.set_state(ShortenerStates.waiting_for_url)
     logger.info("State set to waiting_for_url")
 
@@ -2547,9 +2540,9 @@ async def cb_shorten_meeting(c: CallbackQuery, state: FSMContext):
 
     # Send new message with meeting topic and provider selection
     kb = shortener_provider_selection_buttons()
-    text = f"**🔗 Kegiatan {topic} akan di short**\n\nPilih provider shortener:"
+    text = f"<b>🔗 Kegiatan {html.escape(topic)} akan di short</b>\n\nPilih provider shortener:"
     if c.message:
-        await c.message.reply(text, reply_markup=kb, parse_mode="Markdown")
+        await c.message.reply(text, reply_markup=kb)
     await state.set_state(ShortenerStates.waiting_for_provider)
     logger.info("State set to waiting_for_provider for meeting URL")
 
@@ -2590,7 +2583,7 @@ async def cb_select_provider(c: CallbackQuery, state: FSMContext):
     
     if supports_custom:
         text = f"<b>🔗 Short URL Generator - Step 3/4</b>\n\nURL: <code>{url}</code>\nProvider: {provider_config.get('name', provider)}\n\nApakah Anda ingin menggunakan custom URL?"
-        await _safe_edit_or_fallback(c, text, reply_markup=shortener_custom_choice_buttons(), parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=shortener_custom_choice_buttons())
         await state.set_state(ShortenerStates.waiting_for_custom_choice)
         logger.info("State set to waiting_for_custom_choice")
     else:
@@ -2715,19 +2708,19 @@ async def create_short_url(update_obj, state: FSMContext, provider: str, custom:
             provider_config = shortener.providers.get(provider, {})
             provider_name = provider_config.get('name', provider)
             
-            text = f"✅ **Short URL Berhasil Dibuat!**\n\n🔗 **URL Asli:** `{url}`\n🔗 **Short URL:** `{short}`\n🔗 **Provider:** {provider_name}"
+            text = f"✅ <b>Short URL Berhasil Dibuat!</b>\n\n🔗 <b>URL Asli:</b> <code>{url}</code>\n🔗 <b>Short URL:</b> <code>{short}</code>\n🔗 <b>Provider:</b> {html.escape(provider_name)}"
             if custom:
-                text += f"\n🔗 **Custom Alias:** `{custom}`"
+                text += f"\n🔗 <b>Custom Alias:</b> <code>{custom}</code>"
             
             reply_markup = back_to_main_new_buttons()
         
         # Handle different update types - send new message instead of editing
         if hasattr(update_obj, 'message') and update_obj.message:
             # It's a CallbackQuery - reply to the message
-            await update_obj.message.reply(text, reply_markup=reply_markup, parse_mode="Markdown")
+            await update_obj.message.reply(text, reply_markup=reply_markup)
         else:
             # It's a Message - reply to it
-            await update_obj.reply(text, reply_markup=reply_markup, parse_mode="Markdown")
+            await update_obj.reply(text, reply_markup=reply_markup)
         
     except Exception as e:
         logger.exception("Failed to create short URL: %s", e)
@@ -2884,7 +2877,7 @@ async def cb_shorten_provider(c: CallbackQuery):
     m_text = getattr(m, 'text', None) if m is not None else None
     if isinstance(m_text, str):
         new_text = (m_text or '') + f"\n\n🔗 <b>Short URL ({provider}):</b> {short}"
-        await _safe_edit_or_fallback(c, new_text, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, new_text)
     else:
         # fallback: answer the callback with the short url
         await c.answer(f"Short URL ({provider}): {short}")
@@ -2910,7 +2903,7 @@ async def cb_cancel_shorten(c: CallbackQuery):
     except Exception:
         pass
     
-    await _safe_edit_or_fallback(c, "<b>❌ Pembuatan Short URL dibatalkan.</b>", parse_mode="HTML")
+    await _safe_edit_or_fallback(c, "<b>❌ Pembuatan Short URL dibatalkan.</b>")
     await c.answer()
 
 
@@ -2988,7 +2981,7 @@ async def cmd_zoom_del(msg: Message):
     if len(results) > 10:
         summary += f"\n... dan {len(results) - 10} hasil lainnya"
     
-    await msg.reply(summary, parse_mode="HTML")
+    await msg.reply(summary)
 
 
 @router.message(Command("backup"))
@@ -3040,11 +3033,11 @@ async def cmd_restore(msg: Message, state: FSMContext):
         return
 
     await msg.reply(
-        "📦 **Mode Restore Backup**\n\n"
+        "📦 <b>Mode Restore Backup</b>\n\n"
         "Kirim file ZIP backup yang ingin direstore.\n\n"
-        "⚠️ **PERINGATAN:** Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
+        "⚠️ <b>PERINGATAN:</b> Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
         "Pastikan file backup valid dan dari sumber terpercaya.",
-        parse_mode="Markdown"
+        
     )
 
     await state.set_state(RestoreStates.waiting_for_file)
@@ -3127,13 +3120,13 @@ async def handle_restore_file(msg: Message, state: FSMContext, bot: Bot):
 
         # Send success message via single edited status
         success_msg = (
-            "✅ **Restore Berhasil!**\n\n"
-            f"📊 **Database:** {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
-            f"🔗 **Shorteners:** {'Berhasil' if shorteners_success else 'Gagal'}\n\n"
+            "✅ <b>Restore Berhasil!</b>\n\n"
+            f"📊 <b>Database:</b> {db_stats.get('tables_created', 0)} tabel dibuat, {db_stats.get('rows_inserted', 0)} baris dimasukkan\n"
+            f"🔗 <b>Shorteners:</b> {'Berhasil' if shorteners_success else 'Gagal'}\n\n"
             "⚠️ Bot akan restart untuk menerapkan perubahan."
         )
 
-        await _set_status(success_msg, parse_mode="Markdown")
+        await _set_status(success_msg)
 
         # Kirim konfirmasi eksplisit agar pengguna melihat pesan sukses dengan jelas
         await _set_status("✅ Restore selesai. Backup telah diterapkan.")
@@ -3265,7 +3258,7 @@ async def cmd_all_user(msg: Message):
     # Buat pesan untuk halaman pertama (page 0)
     try:
         text, keyboard = await build_all_users_message(page=0)
-        await msg.reply(text, reply_markup=keyboard, parse_mode="HTML") # Menggunakan HTML agar emoji render
+        await msg.reply(text, reply_markup=keyboard) # Menggunakan HTML agar emoji render
     except Exception as e:
         logger.exception("Failed to build /all_users list: %s", e)
         await msg.reply(f"Terjadi kesalahan saat mengambil daftar user: {e}")
@@ -3297,7 +3290,7 @@ async def cb_all_users(c: CallbackQuery):
         text, keyboard = await build_all_users_message(page=page)
         
         # Gunakan _safe_edit_or_fallback untuk mengedit pesan
-        await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=keyboard)
         await c.answer() # Menjawab callback (menghilangkan loading)
     except Exception as e:
         logger.exception("Failed to update /all_users page: %s", e)
@@ -3321,7 +3314,7 @@ async def _show_manage_user_screen(c: CallbackQuery, managed_user_id: int):
     text += "Pilih tindakan yang ingin Anda lakukan:"
     
     keyboard = manage_users_buttons(managed_user_id)
-    await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=keyboard)
 
 @router.callback_query(lambda c: c.data and c.data.startswith('manage_user:'))
 async def cb_manage_user(c: CallbackQuery):
@@ -3393,7 +3386,7 @@ async def cb_delete_user(c: CallbackQuery):
         ]
     ])
     
-    await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=keyboard)
     await c.answer()
 
 
@@ -3426,7 +3419,7 @@ async def cb_confirm_delete(c: CallbackQuery):
     # Refresh daftar user ke halaman pertama
     try:
         text, keyboard = await build_all_users_message(page=0)
-        await _safe_edit_or_fallback(c, text, reply_markup=keyboard, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=keyboard)
     except Exception as e:
         logger.exception("Gagal me-refresh daftar user setelah penghapusan: %s", e)
         await _safe_edit_or_fallback(c, "Gagal me-refresh daftar user.")
@@ -3631,7 +3624,7 @@ async def cmd_register_list(msg: Message):
         # Use pending_user_buttons from keyboards.py
         keyboard = pending_user_buttons(user_id)
         
-        await msg.answer(user_list_text, reply_markup=keyboard, parse_mode="HTML")
+        await msg.answer(user_list_text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("accept:"))
@@ -3660,7 +3653,7 @@ async def cb_accept_user(c: CallbackQuery, bot: Bot):
         original_text = c.message.text
         admin_username = c.from_user.username or f"Admin ({c.from_user.id})"
         new_text = f"{original_text}\n\n✅ Diterima oleh @{admin_username}"
-        await c.message.edit_text(new_text, reply_markup=None, parse_mode="HTML")
+        await c.message.edit_text(new_text, reply_markup=None)
 
     await c.answer(f"User {user_id_to_accept} telah diterima.", show_alert=True)
     
@@ -3695,7 +3688,7 @@ async def cb_reject_user(c: CallbackQuery, bot: Bot):
         original_text = c.message.text
         admin_username = c.from_user.username or f"Admin ({c.from_user.id})"
         new_text = f"{original_text}\n\n❌ Ditolak oleh @{admin_username}"
-        await c.message.edit_text(new_text, reply_markup=None, parse_mode="HTML")
+        await c.message.edit_text(new_text, reply_markup=None)
 
     await c.answer(f"User {user_id_to_reject} telah ditolak dan dihapus.", show_alert=True)
     
@@ -3731,7 +3724,7 @@ async def cb_ban_user(c: CallbackQuery, bot: Bot):
         original_text = c.message.text
         admin_username = c.from_user.username or f"Admin ({c.from_user.id})"
         new_text = f"{original_text}\n\n🚫 Dibanned oleh @{admin_username}"
-        await c.message.edit_text(new_text, reply_markup=None, parse_mode="HTML")
+        await c.message.edit_text(new_text, reply_markup=None)
 
     await c.answer(f"User {user_id_to_ban} telah dibanned.", show_alert=True)
     
@@ -3756,7 +3749,7 @@ async def cb_menu_meetings(c: CallbackQuery):
         return
 
     text = "📅 <b>Manajemen Meeting</b>\n\nPilih aksi yang ingin dilakukan:"
-    await _safe_edit_or_fallback(c, text, reply_markup=meetings_menu_keyboard(), parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=meetings_menu_keyboard())
     await c.answer()
 
 
@@ -3773,7 +3766,7 @@ async def cb_menu_users(c: CallbackQuery):
         return
 
     text = "👥 <b>Manajemen User</b>\n\nKelola user dan permission:"
-    await _safe_edit_or_fallback(c, text, reply_markup=users_menu_keyboard(), parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=users_menu_keyboard())
     await c.answer()
 
 
@@ -3793,7 +3786,7 @@ async def cb_menu_backup(c: CallbackQuery):
         return
 
     text = "💾 <b>Backup & Restore</b>\n\nKelola backup database:"
-    await _safe_edit_or_fallback(c, text, reply_markup=backup_menu_keyboard(), parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=backup_menu_keyboard())
     await c.answer()
 
 
@@ -3854,7 +3847,7 @@ async def cb_restore_db(c: CallbackQuery, state: FSMContext):
         "Kirim file ZIP backup yang ingin direstore.\n\n"
         "⚠️ <b>PERINGATAN:</b> Ini akan menggantikan database dan konfigurasi yang ada!\n\n"
         "Pastikan file backup valid dan dari sumber terpercaya.",
-        parse_mode="HTML"
+        
     )
 
     await state.set_state(RestoreStates.waiting_for_file)
@@ -3873,7 +3866,7 @@ async def cb_menu_shortener(c: CallbackQuery):
         return
 
     text = "🔗 <b>URL Shortener</b>\n\nBuat short URL untuk link meeting:"
-    await _safe_edit_or_fallback(c, text, reply_markup=shortener_menu_keyboard(), parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=shortener_menu_keyboard())
     await c.answer()
 
 
@@ -3885,7 +3878,7 @@ async def cb_menu_info(c: CallbackQuery):
         return
 
     text = "ℹ️ <b>Informasi & Bantuan</b>\n\nPilih informasi yang dibutuhkan:"
-    await _safe_edit_or_fallback(c, text, reply_markup=info_menu_keyboard(), parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=info_menu_keyboard())
     await c.answer()
 
 
@@ -3915,10 +3908,10 @@ async def cb_sync_meetings(c: CallbackQuery):
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Sistem otomatis mensinkronkan setiap 30 menit dan saat startup.</i>"
         )
-        await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons())
     except Exception as e:
         logger.exception("Manual sync failed: %s", e)
-        await _safe_edit_or_fallback(c, f"❌ <b>Gagal melakukan sinkronisasi:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await _safe_edit_or_fallback(c, f"❌ <b>Gagal melakukan sinkronisasi:</b> {e}", reply_markup=back_to_main_buttons())
 
 
 @router.callback_query(lambda c: c.data == 'check_expired')
@@ -3944,10 +3937,10 @@ async def cb_check_expired(c: CallbackQuery):
             f"❌ Error: {stats['errors']}\n\n"
             "<i>Meeting yang sudah lewat waktu mulai akan ditandai sebagai done.</i>"
         )
-        await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=back_to_main_buttons())
     except Exception as e:
         logger.exception("Manual expiry check failed: %s", e)
-        await _safe_edit_or_fallback(c, f"❌ <b>Gagal memeriksa done meetings:</b> {e}", reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await _safe_edit_or_fallback(c, f"❌ <b>Gagal memeriksa done meetings:</b> {e}", reply_markup=back_to_main_buttons())
 
 
 @router.callback_query(lambda c: c.data == 'show_help')
@@ -3992,7 +3985,7 @@ async def cb_show_help(c: CallbackQuery):
         LAST_HELP_MESSAGE[c.message.chat.id] = c.message.message_id
         await _send_help_message(c.message.chat.id, bot, help_text)
     else:
-        await _safe_edit_or_fallback(c, help_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+        await _safe_edit_or_fallback(c, help_text, reply_markup=back_to_main_buttons())
     await c.answer()
     await c.answer()
 
@@ -4030,7 +4023,7 @@ async def cb_show_about(c: CallbackQuery):
 
 <i>Dikembangkan untuk Tim SOC - Security Operations Center</i>
 """
-    await _safe_edit_or_fallback(c, about_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    await _safe_edit_or_fallback(c, about_text, reply_markup=back_to_main_buttons())
     await c.answer()
 
 
@@ -4058,7 +4051,7 @@ async def cb_whoami(c: CallbackQuery):
 <i>Informasi ini bersifat pribadi dan hanya ditampilkan kepada Anda.</i>
 """
     
-    await _safe_edit_or_fallback(c, info_text, reply_markup=back_to_main_buttons(), parse_mode="HTML")
+    await _safe_edit_or_fallback(c, info_text, reply_markup=back_to_main_buttons())
     await c.answer()
 
 
@@ -4091,11 +4084,11 @@ async def cb_back_to_main(c: CallbackQuery):
         # Update the current message
         # Update the current message with main menu
         kb = main_menu_keyboard(user.get('role', 'user'))
-        await _safe_edit_or_fallback(c, greeting_text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, greeting_text, reply_markup=kb)
     elif user and user.get('status') == 'banned':
-        await _safe_edit_or_fallback(c, "<i>Anda dibanned dari menggunakan bot ini.</i>", parse_mode="HTML")
+        await _safe_edit_or_fallback(c, "<i>Anda dibanned dari menggunakan bot ini.</i>")
     else:
-        await _safe_edit_or_fallback(c, "<i>Permintaan Anda sedang menunggu persetujuan.</i>", parse_mode="HTML")
+        await _safe_edit_or_fallback(c, "<i>Permintaan Anda sedang menunggu persetujuan.</i>")
 
 
 @router.callback_query(lambda c: c.data == 'back_to_main_new')
@@ -4135,11 +4128,11 @@ async def cb_back_to_main_new(c: CallbackQuery):
         # Send a new message
         # Send a new message with main menu
         kb = main_menu_keyboard(user.get('role', 'user'))
-        await c.message.reply(greeting_text, reply_markup=kb, parse_mode="HTML")
+        await c.message.reply(greeting_text, reply_markup=kb)
     elif user and user.get('status') == 'banned':
-        await c.message.reply("<i>Anda dibanned dari menggunakan bot ini.</i>", parse_mode="HTML")
+        await c.message.reply("<i>Anda dibanned dari menggunakan bot ini.</i>")
     else:
-        await c.message.reply("<i>Permintaan Anda sedang menunggu persetujuan.</i>", parse_mode="HTML")
+        await c.message.reply("<i>Permintaan Anda sedang menunggu persetujuan.</i>")
 
 
 @router.message(lambda m: m.text and m.text.startswith('/'))
@@ -4191,8 +4184,8 @@ async def shortener_receive_url(msg: Message, state: FSMContext):
     logger.info("URL stored in state: %s", url)
     
     # Show provider selection
-    text = f"**🔗 Short URL Generator - Step 2/4**\n\nURL: `{url}`\n\nPilih provider yang ingin digunakan:"
-    await msg.reply(text, reply_markup=shortener_provider_selection_buttons(), parse_mode="Markdown")
+    text = f"<b>🔗 Short URL Generator - Step 2/4</b>\n\nURL: <code>{url}</code>\n\nPilih provider yang ingin digunakan:"
+    await msg.reply(text, reply_markup=shortener_provider_selection_buttons())
     await state.set_state(ShortenerStates.waiting_for_provider)
     logger.info("State set to waiting_for_provider")
 
@@ -4267,11 +4260,11 @@ async def cb_back_to_main(c: CallbackQuery):
         # Update the current message
         # Update the current message with main menu
         kb = main_menu_keyboard(user.get('role', 'user'))
-        await _safe_edit_or_fallback(c, greeting_text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, greeting_text, reply_markup=kb)
     elif user and user.get('status') == 'banned':
-        await _safe_edit_or_fallback(c, "<i>Anda dibanned dari menggunakan bot ini.</i>", parse_mode="HTML")
+        await _safe_edit_or_fallback(c, "<i>Anda dibanned dari menggunakan bot ini.</i>")
     else:
-        await _safe_edit_or_fallback(c, "<i>Permintaan Anda sedang menunggu persetujuan.</i>", parse_mode="HTML")
+        await _safe_edit_or_fallback(c, "<i>Permintaan Anda sedang menunggu persetujuan.</i>")
 
 
 @router.callback_query(lambda c: c.data == 'back_to_main_new')
@@ -4311,11 +4304,11 @@ async def cb_back_to_main_new(c: CallbackQuery):
         # Send a new message
         # Send a new message with main menu
         kb = main_menu_keyboard(user.get('role', 'user'))
-        await c.message.reply(greeting_text, reply_markup=kb, parse_mode="HTML")
+        await c.message.reply(greeting_text, reply_markup=kb)
     elif user and user.get('status') == 'banned':
-        await c.message.reply("<i>Anda dibanned dari menggunakan bot ini.</i>", parse_mode="HTML")
+        await c.message.reply("<i>Anda dibanned dari menggunakan bot ini.</i>")
     else:
-        await c.message.reply("<i>Permintaan Anda sedang menunggu persetujuan.</i>", parse_mode="HTML")
+        await c.message.reply("<i>Permintaan Anda sedang menunggu persetujuan.</i>")
 
 
 @router.message(lambda m: m.text and m.text.startswith('/'))
@@ -4368,8 +4361,8 @@ async def shortener_receive_url(msg: Message, state: FSMContext):
     logger.info("URL stored in state: %s", url)
     
     # Show provider selection
-    text = f"**🔗 Short URL Generator - Step 2/4**\n\nURL: `{url}`\n\nPilih provider yang ingin digunakan:"
-    await msg.reply(text, reply_markup=shortener_provider_selection_buttons(), parse_mode="Markdown")
+    text = f"<b>🔗 Short URL Generator - Step 2/4</b>\n\nURL: <code>{url}</code>\n\nPilih provider yang ingin digunakan:"
+    await msg.reply(text, reply_markup=shortener_provider_selection_buttons())
     await state.set_state(ShortenerStates.waiting_for_provider)
     logger.info("State set to waiting_for_provider")
 

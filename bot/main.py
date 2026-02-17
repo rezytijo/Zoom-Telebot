@@ -141,7 +141,13 @@ async def main():
         logger.error("TELEGRAM_TOKEN not configured. Please set it in .env file.")
         return
 
-    bot = Bot(token=settings.bot_token)
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
     dp = Dispatcher(storage=DatabaseFSMStorage(settings.db_path))
     # Include cloud recording handlers FIRST (before generic handlers)
     dp.include_router(cloud_recording_router)

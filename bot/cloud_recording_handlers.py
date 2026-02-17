@@ -134,7 +134,7 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
         ])
 
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
     except Exception as e:
         logger.error(f"Failed to refresh control zoom UI: {e}")
@@ -217,7 +217,7 @@ async def cb_cloud_start_record(c: CallbackQuery):
         [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('cloud_stop_record:'))
@@ -256,7 +256,7 @@ async def cb_cloud_stop_record(c: CallbackQuery):
         [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('cloud_pause_record:'))
@@ -295,7 +295,7 @@ async def cb_cloud_pause_record(c: CallbackQuery):
         [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('cloud_resume_record:'))
@@ -334,7 +334,7 @@ async def cb_cloud_resume_record(c: CallbackQuery):
         [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
     ])
 
-    await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('view_cloud_recordings:'))
@@ -395,7 +395,7 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
                 [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
             ])
             await loading_msg.delete()
-            await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+            await _safe_edit_or_fallback(c, text, reply_markup=kb)
             return
 
         # Parse recording data
@@ -542,7 +542,7 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
 
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
         await loading_msg.delete()
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
 
     except Exception as e:
         logger.exception(f"Failed to get cloud recordings for meeting {meeting_id}")
@@ -552,4 +552,4 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
         ])
         await loading_msg.delete()
-        await _safe_edit_or_fallback(c, text, reply_markup=kb, parse_mode="HTML")
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
