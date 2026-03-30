@@ -76,8 +76,8 @@ async def check_dependencies():
                 for item in outdated:
                     pkg = item.get('name')
                     curr = item.get('version')
-                    latest = item.get('latest') or "Unknown"
-                    report.append(f"- <code>{pkg}</code>: {curr} -> {latest}")
+                    latest = item.get('latest_version') or "Unknown"
+                    report.append(f"• <code>{pkg}</code>: {curr} ➡️ <b>{latest}</b>")
                 report.append("")
         else:
             logger.error(f"pip list outdated failed: {result.stderr}")

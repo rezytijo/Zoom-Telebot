@@ -457,6 +457,10 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
         # Start the meeting via Zoom API
         await zoom_client.start_meeting(meeting_id)
         
+        # Securly update DB states to make UI responsive immediately
+        from db import update_meeting_live_status
+        await update_meeting_live_status(meeting_id, 'started')
+        
         # Extract URLs from meeting details
         start_url = meeting_details.get('start_url', '')
         join_url = meeting_details.get('join_url', '')
@@ -464,14 +468,12 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
         
         if start_url:
             text = (
-                "✅ <b>Meeting Siap Dimulai!</b>\n\n"
+                "✅ <b>Meeting Berhasil Diaktifkan!</b>\n\n"
                 f"📌 <b>Topic:</b> {topic}\n"
                 f"🔗 <b>Join URL:</b> <code>{join_url}</code>\n\n"
-                "Klik tombol <b>🚀 Mulai sebagai Host</b> di bawah ini untuk:\n"
-                "• Membuka Zoom di browser/aplikasi Anda\n"
-                "• Join otomatis sebagai Host\n"
-                "• Kontrol penuh atas meeting\n\n"
-                "<i>💡 Anda akan dibawa ke Zoom tanpa perlu login manual!</i>"
+                "🔓 <b>Status: Ruangan Terbuka!</b>\n"
+                "Peserta sudah bisa langsung masuk & berbicara tanpa menunggu Anda login sebagai Host.\n\n"
+                "🏢 <i>Opsional:</i> Klik tombol <b>🚀 Mulai sebagai Host</b> di bawah ini HANYA JIKA Anda ingin merangkap masuk bertindak sebagai admin Zoom di ruangan tersebut."
             )
             
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -2691,12 +2693,12 @@ async def create_short_url(update_obj, state: FSMContext, provider: str, custom:
             greeting = meeting_info.get('greeting', 'Selamat')
             
             text = (
-                f"**{greeting} Bapak/Ibu/Rekan-rekan**\n"
-                f"**Berikut disampaikan Kegiatan {topic} pada:**\n\n"
+                f"<b>{greeting} Bapak/Ibu/Rekan-rekan</b>\n"
+                f"<b>Berikut disampaikan Kegiatan {topic} pada:</b>\n\n"
                 f"📆  {disp_date}\n"
                 f"⏰  {disp_time} WIB – selesai\n"
                 f"🔗  {short}\n\n"
-                "**Demikian disampaikan, terimakasih.**"
+                "<b>Demikian disampaikan, terimakasih.</b>"
             )
             
             # Add buttons for additional actions
@@ -2759,9 +2761,9 @@ async def cb_custom_yes(c: CallbackQuery, state: FSMContext):
     provider_config = shortener.providers.get(provider, {})
     provider_name = provider_config.get('name', provider)
     
-    text = f"**🔗 Short URL Generator - Step 4/4**\n\nURL: `{url}`\nProvider: {provider_name}\n\n✅ **Custom URL dipilih!**\n\nSilahkan masukkan custom URL yang diinginkan:\n\nℹ️ **Aturan:**\n• Hanya huruf, angka, underscore (_), dash (-), titik (.)\n• Minimal 3 karakter, maksimal 50 karakter\n• Contoh: `my-link`, `test_123`, `example.site`"
+    text = f"<b>🔗 Short URL Generator - Step 4/4</b>\n\nURL: <code>{url}</code>\nProvider: {provider_name}\n\n✅ <b>Custom URL dipilih!</b>\n\nSilahkan masukkan custom URL yang diinginkan:\n\nℹ️ <b>Aturan:</b>\n• Hanya huruf, angka, underscore (_), dash (-), titik (.)\n• Minimal 3 karakter, maksimal 50 karakter\n• Contoh: <code>my-link</code>, <code>test_123</code>, <code>example.site</code>"
     
-    await _safe_edit_or_fallback(c, text, parse_mode="Markdown")
+    await _safe_edit_or_fallback(c, text, parse_mode="HTML")
     await state.set_state(ShortenerStates.waiting_for_custom_url)
     logger.info("State set to waiting_for_custom_url")
     await c.answer()
@@ -2785,8 +2787,8 @@ async def cb_custom_no(c: CallbackQuery, state: FSMContext):
 async def cb_cancel_shortener_flow(c: CallbackQuery, state: FSMContext):
     await state.clear()
     await c.answer("Dibatalkan")
-    text = "❌ **Short URL dibatalkan**\n\nPilih aksi:"
-    await _safe_edit_or_fallback(c, text, reply_markup=user_action_buttons(), parse_mode="Markdown")
+    text = "❌ <b>Short URL dibatalkan</b>\n\nPilih aksi:"
+    await _safe_edit_or_fallback(c, text, reply_markup=user_action_buttons(), parse_mode="HTML")
 
 
 @router.message(ShortenerStates.waiting_for_custom_url)
@@ -2800,15 +2802,15 @@ async def shortener_receive_custom_url(msg: Message, state: FSMContext):
     # Validate custom URL
     import re
     if not re.match(r'^[a-zA-Z0-9._-]+$', custom_url):
-        await msg.reply("❌ **Custom URL tidak valid!**\n\nHanya boleh menggunakan:\n• Huruf (a-z, A-Z)\n• Angka (0-9)\n• Underscore (_)\n• Dash (-)\n• Titik (.)\n\nKirim ulang custom URL yang benar:")
+        await msg.reply("❌ <b>Custom URL tidak valid!</b>\n\nHanya boleh menggunakan:\n• Huruf (a-z, A-Z)\n• Angka (0-9)\n• Underscore (_)\n• Dash (-)\n• Titik (.)\n\nKirim ulang custom URL yang benar:")
         return
     
     if len(custom_url) < 3:
-        await msg.reply("❌ **Custom URL terlalu pendek!**\n\nMinimal 3 karakter. Kirim ulang:")
+        await msg.reply("❌ <b>Custom URL terlalu pendek!</b>\n\nMinimal 3 karakter. Kirim ulang:")
         return
     
     if len(custom_url) > 50:
-        await msg.reply("❌ **Custom URL terlalu panjang!**\n\nMaksimal 50 karakter. Kirim ulang:")
+        await msg.reply("❌ <b>Custom URL terlalu panjang!</b>\n\nMaksimal 50 karakter. Kirim ulang:")
         return
 
     # Get state data

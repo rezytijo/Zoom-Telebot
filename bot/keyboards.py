@@ -22,8 +22,8 @@ def main_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
     # Admin/Owner extras
     if user_role in ["admin", "owner"]:
         keyboard.append([InlineKeyboardButton(text="💾 Backup & Restore", callback_data="menu_backup")])
-        agent_status = "🟢 Agent Control ON" if _is_agent_control_enabled() else "⚫ Agent Control OFF"
-        keyboard.append([InlineKeyboardButton(text=agent_status, callback_data="noop")])
+        if _is_agent_control_enabled():
+            keyboard.append([InlineKeyboardButton(text="🟢 Agent Control ON", callback_data="noop")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

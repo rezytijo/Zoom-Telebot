@@ -332,7 +332,7 @@ class ZoomClient:
 
 
     async def start_meeting(self, meeting_id: str) -> Dict[str, Any]:
-        """Start a scheduled Zoom meeting.
+        """Start a scheduled Zoom meeting mentally and physically.
 
         Returns meeting details with start_url and join_url.
         """
@@ -347,6 +347,21 @@ class ZoomClient:
                 if resp.status == 200:
                     data = await resp.json()
                     self.logger.info("Meeting %s started successfully", meeting_id)
+                    
+                    # Also PATCH the meeting settings to enable Join Before Host (so media room actually opens)
+                    patch_url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
+                    patch_payload = {
+                        "settings": {
+                            "join_before_host": True,
+                            "jbh_time": 0
+                        }
+                    }
+                    async with session.patch(patch_url, json=patch_payload, headers=headers) as patch_resp:
+                        if patch_resp.status in (200, 204):
+                            self.logger.info("Meeting %s join_before_host enabled automatically", meeting_id)
+                        else:
+                            self.logger.warning("Failed to enable JBH for meeting %s: %s", meeting_id, patch_resp.status)
+                            
                     return data
                 else:
                     text = await resp.text()
