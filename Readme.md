@@ -403,8 +403,16 @@ LOG_LEVEL=INFO              # Normal logging
 docker compose up -d        # Docker Compose orchestration
 ```
 
-## ✨ Recent Updates (February 2026)
+## ✨ Recent Updates (June 2026)
 
+### Version v2026.06.24 - Zoom Security Update
+
+#### 🔒 Security & Passcode
+- **Automatic Passcode Extraction**: Merespons kebijakan Zoom terbaru yang mewajibkan Passcode atau Waiting Room, bot sekarang mengekstrak dan menampilkan Passcode secara eksplisit pada balasan ke pengguna ketika meeting berhasil dibuat.
+
+---
+
+## ✨ Recent Updates (February 2026)
 ### Version v2026.02.17 - System Hardening & Security Audit
 
 #### 🆕 System Hardening

@@ -234,3 +234,11 @@ context.md
 
 # OneDrive/temp local paths
 *.one
+
+# Graphify generated output
+graphify/
+.graphify/
+graphify-out/
+graphify-output/
+graphify-output/**
+run_graphify.py

@@ -336,37 +336,29 @@ class ZoomClient:
 
         Returns meeting details with start_url and join_url.
         """
-        self.logger.info("Starting meeting %s", meeting_id)
+        self.logger.info("Opening doors (JBH) for meeting %s", meeting_id)
         token = await self.ensure_token()
-        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/status"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        payload = {"action": "start"}
-
+        
+        # We cannot "start" via /status API. We just patch JBH to True.
+        patch_url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
+        patch_payload = {
+            "settings": {
+                "join_before_host": True,
+                "jbh_time": 0
+            }
+        }
+        
         async with aiohttp.ClientSession() as session:
-            async with session.put(url, json=payload, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    self.logger.info("Meeting %s started successfully", meeting_id)
-                    
-                    # Also PATCH the meeting settings to enable Join Before Host (so media room actually opens)
-                    patch_url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
-                    patch_payload = {
-                        "settings": {
-                            "join_before_host": True,
-                            "jbh_time": 0
-                        }
-                    }
-                    async with session.patch(patch_url, json=patch_payload, headers=headers) as patch_resp:
-                        if patch_resp.status in (200, 204):
-                            self.logger.info("Meeting %s join_before_host enabled automatically", meeting_id)
-                        else:
-                            self.logger.warning("Failed to enable JBH for meeting %s: %s", meeting_id, patch_resp.status)
-                            
-                    return data
+            async with session.patch(patch_url, json=patch_payload, headers=headers) as patch_resp:
+                if patch_resp.status in (200, 204):
+                    self.logger.info("Meeting %s join_before_host enabled automatically", meeting_id)
+                    # Returning dummy data because get_meeting is called separately anyway
+                    return {"status": "started"}
                 else:
-                    text = await resp.text()
-                    self.logger.error("Failed to start meeting %s: %s - %s", meeting_id, resp.status, text)
-                    raise Exception(f"Failed to start meeting: {resp.status} - {text}")
+                    text = await patch_resp.text()
+                    self.logger.warning("Failed to enable JBH for meeting %s: %s - %s", meeting_id, patch_resp.status, text)
+                    raise Exception(f"Failed to open meeting room: {patch_resp.status} - {text}")
 
 
     async def get_meeting_participants(self, meeting_id: str) -> List[Dict[str, Any]]:
@@ -540,6 +532,28 @@ class ZoomClient:
                     self.logger.warning("Failed to get cloud recordings for meeting %s: %s - %s", 
                                        meeting_id, resp.status, text)
                     return None
+
+    async def delete_cloud_recording(self, meeting_id: str) -> bool:
+        """Delete all cloud recording files for a meeting by moving them to trash.
+        
+        Uses action=trash so they can be recovered within 30 days if needed.
+        
+        Zoom API Endpoint: DELETE /v2/meetings/{meetingId}/recordings
+        """
+        self.logger.info("Moving cloud recordings to trash for meeting %s", meeting_id)
+        token = await self.ensure_token()
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}/recordings?action=trash"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(url, headers=headers) as resp:
+                if resp.status == 204:
+                    self.logger.info("Cloud recordings for meeting %s moved to trash successfully", meeting_id)
+                    return True
+                else:
+                    text = await resp.text()
+                    self.logger.error("Failed to delete cloud recordings for meeting %s: %s - %s", meeting_id, resp.status, text)
+                    return False
 
 
 zoom_client = ZoomClient()

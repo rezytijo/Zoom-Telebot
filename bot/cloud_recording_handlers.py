@@ -131,7 +131,7 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
         # Always available actions
         kb_rows.extend([
             [InlineKeyboardButton(text="☁️ View Cloud Recordings", callback_data=f"view_cloud_recordings:{meeting_id}")],
-            [InlineKeyboardButton(text="🔄️ Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
+            [InlineKeyboardButton(text="🔄 Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
             [InlineKeyboardButton(text="📊 Meeting Details", callback_data=f"zoom_meeting_details:{meeting_id}")],
             [InlineKeyboardButton(text="⬅️ Kembali ke Daftar", callback_data="list_meetings")]
         ])
@@ -536,6 +536,7 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
         
         # Add navigation buttons
         kb_rows.extend([
+            [InlineKeyboardButton(text="🗑️ Hapus Rekaman (Trash)", callback_data=f"confirm_del_rec:{meeting_id}")],
             [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"view_cloud_recordings:{meeting_id}")],
             [InlineKeyboardButton(text="☁️ Kembali ke Cloud Recording", callback_data="list_cloud_recordings")],
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
@@ -554,5 +555,61 @@ async def cb_view_cloud_recordings(c: CallbackQuery):
             [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
         ])
-        await loading_msg.delete()
         await _safe_edit_or_fallback(c, text, reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('confirm_del_rec:'))
+async def cb_confirm_del_rec(c: CallbackQuery):
+    """Show confirmation prompt before moving recordings to trash."""
+    meeting_id = c.data.split(':', 1)[1]
+    
+    text = (
+        "⚠️ <b>Konfirmasi Hapus Rekaman</b>\n\n"
+        f"Apakah Anda yakin ingin menghapus semua rekaman cloud untuk meeting <code>{meeting_id}</code>?\n\n"
+        "<i>💡 Catatan: File rekaman tidak akan langsung lenyap permanen, melainkan dipindahkan ke Trash (Tong Sampah) Zoom selama 30 hari.</i>"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✔️ Ya, Hapus (Move to Trash)", callback_data=f"do_del_rec:{meeting_id}")],
+        [InlineKeyboardButton(text="❌ Batal", callback_data=f"view_cloud_recordings:{meeting_id}")]
+    ])
+    
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('do_del_rec:'))
+async def cb_do_del_rec(c: CallbackQuery):
+    """Execute cloud recording deletion."""
+    meeting_id = c.data.split(':', 1)[1]
+    
+    # Check permissions conceptually if needed, but handled mostly at menu entry
+    await c.answer("Sedang menghapus rekaman...")
+    loading_msg = await c.message.reply("⏳ Memindahkan cloud recording ke trash...")
+    
+    try:
+        success = await zoom_client.delete_cloud_recording(meeting_id)
+        
+        if success:
+            # Clear our DB cache so it doesn't show old records
+            await update_meeting_cloud_recording_data(meeting_id, {})
+            
+            text = f"✅ <b>Rekaman Berhasil Dihapus</b>\n\nRekaman cloud untuk meeting <code>{meeting_id}</code> telah dipindahkan ke Trash Zoom."
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="☁️ Kembali ke Cloud Recording", callback_data="list_cloud_recordings")],
+                [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+            ])
+        else:
+            text = f"❌ <b>Gagal menghapus rekaman</b>\n\nTerjadi kesalahan atau recoding tidak ditemukan."
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Coba Lagi", callback_data=f"view_cloud_recordings:{meeting_id}")],
+                [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")]
+            ])
+    except Exception as e:
+        logger.exception(f"Exception during cloud recording deletion for {meeting_id}")
+        text = f"❌ <b>Error</b>\n\n{str(e)}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")]
+        ])
+
+    await loading_msg.delete()
+    await _safe_edit_or_fallback(c, text, reply_markup=kb)

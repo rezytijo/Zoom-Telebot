@@ -411,7 +411,7 @@ async def cb_control_zoom(c: CallbackQuery):
 
     # Always available actions
     kb_rows.extend([
-        [InlineKeyboardButton(text="🔄️ Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
+        [InlineKeyboardButton(text="🔄 Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
         [InlineKeyboardButton(text="📊 Meeting Details", callback_data=f"zoom_meeting_details:{meeting_id}")],
         [InlineKeyboardButton(text="⬅️ Kembali ke Daftar", callback_data="list_meetings")]
     ])
@@ -1596,7 +1596,8 @@ async def cmd_zoom(msg: Message):
                 'time_str': time_str,
                 'join_url': join_url,
                 'zoom_id': zoom_id,
-                'start_time_iso': start_time_iso
+                'start_time_iso': start_time_iso,
+                'passcode': meeting.get('password')
             })
             
         except Exception as e:
@@ -1651,8 +1652,10 @@ async def cmd_zoom(msg: Message):
                 disp_date = f"{day_name}, {dt.day} {MONTHS_ID_DISPLAY.get(dt.month, dt.month)} {dt.year}"
                 disp_time = f"{dt.hour:02d}:{dt.minute:02d}"
 
+                passcode = meeting.get('passcode')
+                passcode_text = f"\n🔑  Passcode: {passcode}" if passcode else ""
                 # Add meeting to text with greeting format  
-                text += f"<b>{i}. Zoom Meeting {topic}</b>\n\n<pre>{greeting} Bapak/Ibu/Rekan-rekan\nBerikut disampaikan Kegiatan {topic} pada:\n\n📆  {disp_date}\n⏰  {disp_time} WIB – selesai\n🔗  {join_url}\n\nDemikian disampaikan, terimakasih.</pre>"
+                text += f"<b>{i}. Zoom Meeting {topic}</b>\n\n<pre>{greeting} Bapak/Ibu/Rekan-rekan\nBerikut disampaikan Kegiatan {topic} pada:\n\n📆  {disp_date}\n⏰  {disp_time} WIB – selesai\n🔗  {join_url}{passcode_text}\n\nDemikian disampaikan, terimakasih.</pre>"
                 
                 # Add separator between meetings (except for the last one)
                 if i < len(successful_meetings):
@@ -1668,7 +1671,8 @@ async def cmd_zoom(msg: Message):
                     'disp_date': disp_date,
                     'disp_time': disp_time,
                     'meeting_id': meeting['zoom_id'],
-                    'greeting': greeting
+                    'greeting': greeting,
+                    'passcode': meeting.get('passcode')
                 }
                 keyboard_buttons.append([
                     InlineKeyboardButton(text=f"🔗 Buat Short URL - {topic}", callback_data=f"shorten:{token}")
@@ -1972,6 +1976,7 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
         return
 
     join = meeting.get('join_url') or meeting.get('start_url') or ''
+    passcode = meeting.get('password')
 
     # Save to DB
     zoom_id = meeting.get('id')
@@ -2002,12 +2007,14 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
     else:
         greeting = 'Selamat malam'
 
+    passcode_text = f"🔑  Passcode: {passcode}\n\n" if passcode else "\n"
     text = (
         f"<b>{greeting} Bapak/Ibu/Rekan-rekan</b>\n"
         f"<b>Berikut disampaikan Kegiatan {html.escape(topic)} pada:</b>\n\n"
         f"📆  {disp_date}\n"
         f"⏰  {disp_time} WIB – selesai\n"
-        f"🔗  {join}\n\n"
+        f"🔗  {join}\n"
+        f"{passcode_text}"
         "<b>Demikian disampaikan, terimakasih.</b>"
     )
 
@@ -2023,7 +2030,8 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
         'disp_date': disp_date,
         'disp_time': disp_time,
         'meeting_id': zoom_id,
-        'greeting': greeting
+        'greeting': greeting,
+        'passcode': passcode
     }
     logger.debug("Stored temp meeting token=%s with complete info", token)
 
@@ -2691,13 +2699,16 @@ async def create_short_url(update_obj, state: FSMContext, provider: str, custom:
             disp_date = meeting_info.get('disp_date', '')
             disp_time = meeting_info.get('disp_time', '')
             greeting = meeting_info.get('greeting', 'Selamat')
+            passcode = meeting_info.get('passcode')
             
+            passcode_text = f"🔑  Passcode: {passcode}\n\n" if passcode else "\n"
             text = (
                 f"<b>{greeting} Bapak/Ibu/Rekan-rekan</b>\n"
                 f"<b>Berikut disampaikan Kegiatan {topic} pada:</b>\n\n"
                 f"📆  {disp_date}\n"
                 f"⏰  {disp_time} WIB – selesai\n"
-                f"🔗  {short}\n\n"
+                f"🔗  {short}\n"
+                f"{passcode_text}"
                 "<b>Demikian disampaikan, terimakasih.</b>"
             )
             
