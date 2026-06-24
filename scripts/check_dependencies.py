@@ -33,17 +33,33 @@ async def check_dependencies():
         if result.returncode != 0:
             # pip-audit returns non-zero if vulnerabilities found
             try:
-                audit_data = json.loads(result.stdout)
-                if audit_data:
+                # Some pip-audit versions may include text before the JSON payload
+                stdout = result.stdout
+                if stdout and "{" in stdout:
+                    stdout = stdout[stdout.find("{"):]
+                elif stdout and "[" in stdout:
+                    stdout = stdout[stdout.find("["):]
+                
+                audit_data = json.loads(stdout)
+                
+                # Handle both list and dict returns based on pip-audit versions
+                dependencies = audit_data.get('dependencies', []) if isinstance(audit_data, dict) else audit_data
+                
+                has_vulns = any(item.get('vulns') for item in dependencies if isinstance(item, dict))
+                
+                if dependencies and has_vulns:
                     report.append("🚨 <b>SECURITY VULNERABILITIES FOUND:</b>")
-                    for item in audit_data:
-                        # Depends on pip-audit version, structure might vary. 
-                        # Usually list of {package, version, vulns: [{id, aliases, fix_versions}]}
+                    for item in dependencies:
+                        if not isinstance(item, dict): continue
+                        
+                        vulns = item.get('vulns', [])
+                        if not vulns:
+                            continue
+                            
                         pkg = item.get('name', 'unknown')
                         ver = item.get('version', '?')
-                        vulns = item.get('vulns', [])
                         
-                        vuln_ids = ", ".join([v.get('id') for v in vulns])
+                        vuln_ids = ", ".join([v.get('id', '') for v in vulns])
                         fix_vers = ", ".join([str(v.get('fix_versions', [])) for v in vulns])
                         
                         report.append(f"- <code>{pkg}</code> ({ver}): {vuln_ids}. Fix: {fix_vers}")
