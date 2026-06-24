@@ -13,3 +13,4 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Memperbaiki parsing JSON `pip-audit` pada `scripts/check_dependencies.py` yang sebelumnya mengalami `AttributeError` akibat perbedaan format respons antar versi `pip-audit`.
+- **Security Update**: Memperbarui versi dependency `pytz`, `pytest`, `pytest-asyncio`, dan `pip-audit` serta *core packages* di Dockerfile untuk mengatasi peringatan kerentanan keamanan (*vulnerabilities*).

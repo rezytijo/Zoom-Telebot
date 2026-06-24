@@ -25,7 +25,8 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip==26.1.2 setuptools==82.0.1 wheel==0.47.0 && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Production stage
 FROM base AS production
