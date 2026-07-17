@@ -250,3 +250,5 @@ graphify-output/
 graphify-output/**
 run_graphify.py
 .pytest-tmp-codex/test_remote_state_preserves_recurrent
+.aionrs/
+bot.lock

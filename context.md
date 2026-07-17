@@ -12,6 +12,7 @@
   - Pushed to Docker Hub on January 8, 2026
 
 **Latest Changes:**
+- 2026-07-17 17:48 WIB — **Zoom Remote Port Mapping (v2026.07.17)** — Mapped remote agent API port 8080 to host machine in `docker-compose.yml` to allow direct API verification (via curl) and local host development/testing.
 - 2026-07-17 17:25 WIB — **Zoom Controls & Details Testing (v2026.07.17)** — Added a second automated integration test suite (`tests/test_meeting_details_controls.py`) to verify the Zoom Control screen and Meeting Details screen. Resolved Telethon message caching and Telegram HTML constraints (unescaped '&' parsing error, localhost URL limitations).
 - 2026-07-17 09:30 WIB — **Telegram Bot Integration Testing (v2026.07.17)** — Added a comprehensive automated integration test suite (`tests/test_bot_integration.py`) using `Telethon` to test the bot end-to-end. It features direct DB whitelisting (to automatically grant owner role to the client account), automated bot subprocess management with token conflict detection, and robust UI interaction testing (inline buttons, FSM text messaging prompts, and Zoom creation/deletion).
 - 2026-07-16 02:30 WIB — **CI/CD Security Audit & Automated Testing (v2026.07.16)** — Added dedicated GitHub Actions workflows to perform dependency vulnerability analysis, static code auditing, dependency freshness checks, and test suite execution.

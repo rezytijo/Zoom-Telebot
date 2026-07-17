@@ -134,7 +134,10 @@ func launch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state = controllerState{MeetingID: id, Status: "launch_requested", RequestedBy: body.RequestedBy, LaunchedAt: time.Now().Unix()}
-	cmd := exec.Command("/usr/bin/zoom", body.StartURL)
+	_ = exec.Command("pkill", "-9", "-x", "zoom").Run()
+	_ = exec.Command("pkill", "-9", "-x", "ZoomLauncher").Run()
+	_ = exec.Command("pkill", "-9", "-f", "ZoomWebviewHost").Run()
+	cmd := exec.Command("/usr/bin/xdg-open", body.StartURL)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	if err := cmd.Start(); err != nil {
 		state.Status, state.LastError = "failed", "launch_failed"
@@ -159,12 +162,14 @@ func stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = exec.Command("pkill", "-TERM", "-x", "zoom").Run()
+	_ = exec.Command("pkill", "-TERM", "-f", "chrome").Run()
 	state = controllerState{Status: "idle"}
 	respond(w, http.StatusOK, map[string]bool{"stopped": true})
 }
 
 func restart(w http.ResponseWriter, _ *http.Request) {
 	_ = exec.Command("pkill", "-TERM", "-x", "zoom").Run()
+	_ = exec.Command("pkill", "-TERM", "-f", "chrome").Run()
 	stateMu.Lock()
 	state = controllerState{Status: "idle"}
 	stateMu.Unlock()
