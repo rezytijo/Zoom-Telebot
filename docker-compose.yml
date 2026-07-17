@@ -14,37 +14,10 @@ services:
     # Environment variables (load from .env file)
     env_file:
       - .env
-    environment:
-      # Logging level
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-
-      # Database configuration (SQLite by default)
-      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./data/zoom_telebot.db}
-
-      # Bot mode
-      - DEFAULT_MODE=${DEFAULT_MODE:-production}
-
-      # Telegram Bot Configuration (REQUIRED)
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - INITIAL_OWNER_ID=${INITIAL_OWNER_ID}
-      - INITIAL_OWNER_USERNAME=${INITIAL_OWNER_USERNAME}
-
-      # Zoom API Configuration (REQUIRED)
-      - ZOOM_ACCOUNT_ID=${ZOOM_ACCOUNT_ID}
-      - ZOOM_CLIENT_ID=${ZOOM_CLIENT_ID}
-      - ZOOM_CLIENT_SECRET=${ZOOM_CLIENT_SECRET}
-
-      # URL Shortener Configuration (OPTIONAL)
-      - SID_ID=${SID_ID}
-      - SID_KEY=${SID_KEY}
-      - BITLY_TOKEN=${BITLY_TOKEN}
-
-      # Agent API Configuration
-      - AGENT_API_PORT=${AGENT_API_PORT:-8767}
-
     # Port mapping for agent API
     ports:
       - "${AGENT_API_PORT:-8767}:${AGENT_API_PORT:-8767}"
+      - "127.0.0.1:${ZOOM_WEBHOOK_PORT:-8081}:8081"
 
     # Volume mounts for data persistence
     volumes:
@@ -59,7 +32,7 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      test: [ "CMD", "python", "-c", "import sys; sys.exit(0)" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -82,6 +55,45 @@ services:
           memory: 256M
           cpus: '0.25'
 
+    depends_on:
+      zoom-remote:
+        condition: service_healthy
+
+  zoom-remote:
+    build:
+      context: .
+      dockerfile: remote/Dockerfile
+      args:
+        KASM_ZOOM_IMAGE: ${KASM_ZOOM_IMAGE:-kasmweb/zoom:1.18.0}
+    container_name: zoom-remote
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      - VNC_PW=${ZOOM_REMOTE_VNC_PASSWORD}
+      - REMOTE_API_TOKEN=${ZOOM_REMOTE_API_TOKEN}
+      - REMOTE_API_PORT=8080
+      - REMOTE_ALLOWED_ZOOM_DOMAINS=.zoom.us
+    expose:
+      - "8080"
+      - "6901"
+    ports:
+      - "127.0.0.1:6901:6901"
+    volumes:
+      - zoom_remote_profile:/home/kasm-user
+    networks:
+      - zoom-telebot-network
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8080/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 # Networks
 networks:
   zoom-telebot-network:
@@ -96,3 +108,6 @@ volumes:
   logs:
     driver: local
     name: logs
+  zoom_remote_profile:
+    driver: local
+    name: zoom_remote_profile

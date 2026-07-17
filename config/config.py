@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 def _to_int(s: str | None) -> int | None:
@@ -16,6 +16,16 @@ def _to_bool(s: str | None) -> bool:
     if not s:
         return False
     return s.lower() in ('true', '1', 'yes', 'on')
+
+
+def _zoom_control_mode(value: str | None) -> str:
+    """Normalize the legacy cloud control mode to the remote Kasm host."""
+    mode = (value or "remote").strip().lower()
+    if mode == "cloud":
+        return "remote"
+    if mode not in {"remote", "agent"}:
+        return "remote"
+    return mode
 
 
 def _db_path_from_database_url(database_url: str | None) -> str:
@@ -68,7 +78,19 @@ class Settings:
     zoom_user_id: str | None = os.getenv("ZOOM_USER_ID")
     zoom_user_email: str | None = os.getenv("ZOOM_USER_EMAIL")
     zoom_audience: str = os.getenv("ZOOM_AUDIENCE", "https://api.zoom.us")
-    zoom_control_mode: str = os.getenv("ZOOM_CONTROL_MODE", "cloud")
+    zoom_control_mode: str = _zoom_control_mode(os.getenv("ZOOM_CONTROL_MODE", "remote"))
+    zoom_recording_mode: str = os.getenv("ZOOM_RECORDING_MODE", "cloud").strip().lower()
+    zoom_remote_base_url: str = os.getenv("ZOOM_REMOTE_BASE_URL", "http://zoom-remote:8080").rstrip("/")
+    zoom_remote_api_token: str | None = os.getenv("ZOOM_REMOTE_API_TOKEN")
+    zoom_remote_public_url: str | None = os.getenv("ZOOM_REMOTE_PUBLIC_URL")
+    zoom_remote_launch_timeout: int = _to_int(os.getenv("ZOOM_REMOTE_LAUNCH_TIMEOUT")) or 120
+    zoom_remote_host_confirm_timeout: int = _to_int(os.getenv("ZOOM_REMOTE_HOST_CONFIRM_TIMEOUT")) or 300
+    zoom_require_host: bool = _to_bool(os.getenv("ZOOM_REQUIRE_HOST", "true"))
+    zoom_join_before_host: bool = _to_bool(os.getenv("ZOOM_JOIN_BEFORE_HOST", "false"))
+    zoom_waiting_room: bool = _to_bool(os.getenv("ZOOM_WAITING_ROOM", "true"))
+    zoom_webhook_secret_token: str | None = os.getenv("ZOOM_WEBHOOK_SECRET_TOKEN")
+    zoom_webhook_host: str = os.getenv("ZOOM_WEBHOOK_HOST", "0.0.0.0")
+    zoom_webhook_port: int = _to_int(os.getenv("ZOOM_WEBHOOK_PORT")) or 8081
 
     # Timezone (e.g., Asia/Jakarta). Also respects TZ/PYTZ_TIMEZONE if TIMEZONE unset.
     timezone: str = os.getenv("TIMEZONE") or os.getenv("TZ") or os.getenv("PYTZ_TIMEZONE", "Asia/Jakarta")

@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Linux container scripts must retain Unix line endings on Windows hosts.
+*.sh text eol=lf
+Dockerfile text eol=lf
+**/Dockerfile text eol=lf

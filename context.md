@@ -1,8 +1,8 @@
 # Zoom-Telebot SOC - AI Context Reference
 
 **Created:** December 5, 2025  
-**Last Updated:** July 16, 2026 02:30 WIB  
-**Version:** v2026.07.16
+**Last Updated:** July 17, 2026 17:25 WIB  
+**Version:** v2026.07.17
 
 **Docker Images:**
 - `rezytijo/zoom-telebot:latest`
@@ -12,6 +12,8 @@
   - Pushed to Docker Hub on January 8, 2026
 
 **Latest Changes:**
+- 2026-07-17 17:25 WIB — **Zoom Controls & Details Testing (v2026.07.17)** — Added a second automated integration test suite (`tests/test_meeting_details_controls.py`) to verify the Zoom Control screen and Meeting Details screen. Resolved Telethon message caching and Telegram HTML constraints (unescaped '&' parsing error, localhost URL limitations).
+- 2026-07-17 09:30 WIB — **Telegram Bot Integration Testing (v2026.07.17)** — Added a comprehensive automated integration test suite (`tests/test_bot_integration.py`) using `Telethon` to test the bot end-to-end. It features direct DB whitelisting (to automatically grant owner role to the client account), automated bot subprocess management with token conflict detection, and robust UI interaction testing (inline buttons, FSM text messaging prompts, and Zoom creation/deletion).
 - 2026-07-16 02:30 WIB — **CI/CD Security Audit & Automated Testing (v2026.07.16)** — Added dedicated GitHub Actions workflows to perform dependency vulnerability analysis, static code auditing, dependency freshness checks, and test suite execution.
 - 2026-02-17 12:05 WIB — **System Hardening & Testing (v2026.02.17)** — Implemented comprehensive system improvements:
     1. **Centralized Logging**: Unification via `bot/logger.py` for consistent console/file output.

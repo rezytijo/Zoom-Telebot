@@ -43,6 +43,12 @@ CREATE_SQL = [
         recording_status TEXT DEFAULT 'stopped', -- stopped, recording, paused
         recording_started_at TIMESTAMP, -- first time recording was started
         agent_id INTEGER, -- agent used for this meeting
+        launch_request_id TEXT,
+        launch_requested_at TIMESTAMP,
+        actual_started_at TIMESTAMP,
+        ended_at TIMESTAMP,
+        requested_by INTEGER,
+        last_remote_error TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -94,51 +100,6 @@ CREATE_SQL = [
     )
     """,
 ]
-
-
-async def run_migrations(db):
-    """Run database migrations to update schema."""
-    logger.info("Running database migrations")
-    
-    # Migration 1: Add agent_id column to meeting_live_status table
-    try:
-        # Check if agent_id column exists
-        cursor = await db.execute("PRAGMA table_info(meeting_live_status)")
-        columns = await cursor.fetchall()
-        column_names = [col[1] for col in columns]
-        
-        if 'agent_id' not in column_names:
-            logger.info("Adding agent_id column to meeting_live_status table")
-            await db.execute("ALTER TABLE meeting_live_status ADD COLUMN agent_id INTEGER")
-            await db.commit()
-            logger.info("Migration 1 completed: agent_id column added")
-        else:
-            logger.debug("Migration 1 skipped: agent_id column already exists")
-            
-    except Exception as e:
-        logger.error("Migration 1 failed: %s", e)
-        raise
-    
-    # Migration 2: Add cloud_recording_data column to meetings table
-    try:
-        # Check if cloud_recording_data column exists
-        cursor = await db.execute("PRAGMA table_info(meetings)")
-        columns = await cursor.fetchall()
-        column_names = [col[1] for col in columns]
-        
-        if 'cloud_recording_data' not in column_names:
-            logger.info("Adding cloud_recording_data column to meetings table")
-            await db.execute("ALTER TABLE meetings ADD COLUMN cloud_recording_data TEXT")
-            await db.commit()
-            logger.info("Migration 2 completed: cloud_recording_data column added")
-        else:
-            logger.debug("Migration 2 skipped: cloud_recording_data column already exists")
-            
-    except Exception as e:
-        logger.error("Migration 2 failed: %s", e)
-        raise
-    
-    logger.info("Database migrations completed")
 
 
 async def init_db():
@@ -536,38 +497,27 @@ async def update_meeting_recording_status(zoom_meeting_id: str, recording_status
     """Update meeting recording status (stopped, recording, paused)"""
     logger.debug("update_meeting_recording_status zoom_id=%s recording_status=%s agent_id=%s", zoom_meeting_id, recording_status, agent_id)
     async with aiosqlite.connect(settings.db_path) as db:
-        # Check if recording has ever been started before
-        cursor = await db.execute("SELECT recording_started_at FROM meeting_live_status WHERE zoom_meeting_id = ?", (zoom_meeting_id,))
-        row = await cursor.fetchone()
-        recording_started_at = row[0] if row else None
-        
-        # If this is the first time recording is started (recording_started_at is None), record the timestamp
-        if recording_status == 'recording' and recording_started_at is None:
-            recording_started_at = "CURRENT_TIMESTAMP"
-        
-        # Always preserve recording_started_at if it exists and is not None, otherwise use the current value
-        if recording_started_at == "CURRENT_TIMESTAMP":
-            if agent_id is not None:
-                await db.execute(
-                    "INSERT OR REPLACE INTO meeting_live_status (zoom_meeting_id, live_status, recording_status, recording_started_at, agent_id, updated_at) VALUES (?, 'started', ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)",
-                    (zoom_meeting_id, recording_status, agent_id)
-                )
-            else:
-                await db.execute(
-                    "INSERT OR REPLACE INTO meeting_live_status (zoom_meeting_id, live_status, recording_status, recording_started_at, updated_at) VALUES (?, 'started', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                    (zoom_meeting_id, recording_status)
-                )
-        else:
-            if agent_id is not None:
-                await db.execute(
-                    "INSERT OR REPLACE INTO meeting_live_status (zoom_meeting_id, live_status, recording_status, recording_started_at, agent_id, updated_at) VALUES (?, 'started', ?, ?, ?, CURRENT_TIMESTAMP)",
-                    (zoom_meeting_id, recording_status, recording_started_at, agent_id)
-                )
-            else:
-                await db.execute(
-                    "INSERT OR REPLACE INTO meeting_live_status (zoom_meeting_id, live_status, recording_status, recording_started_at, updated_at) VALUES (?, 'started', ?, ?, CURRENT_TIMESTAMP)",
-                    (zoom_meeting_id, recording_status, recording_started_at)
-                )
+        await db.execute(
+            """
+            INSERT INTO meeting_live_status (
+                zoom_meeting_id, live_status, recording_status,
+                recording_started_at, agent_id, updated_at
+            ) VALUES (
+                ?, 'started', ?, CASE WHEN ? = 'recording' THEN CURRENT_TIMESTAMP ELSE NULL END,
+                ?, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT(zoom_meeting_id) DO UPDATE SET
+                live_status = 'started',
+                recording_status = excluded.recording_status,
+                recording_started_at = CASE
+                    WHEN meeting_live_status.recording_started_at IS NULL
+                         AND excluded.recording_status = 'recording' THEN CURRENT_TIMESTAMP
+                    ELSE meeting_live_status.recording_started_at END,
+                agent_id = COALESCE(excluded.agent_id, meeting_live_status.agent_id),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (zoom_meeting_id, recording_status, recording_status, agent_id),
+        )
         await db.commit()
     logger.info("Meeting %s recording status updated to %s", zoom_meeting_id, recording_status)
 
@@ -591,19 +541,26 @@ async def get_meeting_agent_id(zoom_meeting_id: str) -> Optional[int]:
 
 
 async def update_meeting_live_status(zoom_meeting_id: str, live_status: str, agent_id: Optional[int] = None):
-    """Update meeting live status (not_started, started, ended)"""
+    """Update meeting state without discarding recording or remote metadata."""
     logger.debug("update_meeting_live_status zoom_id=%s live_status=%s agent_id=%s", zoom_meeting_id, live_status, agent_id)
     async with aiosqlite.connect(settings.db_path) as db:
-        if agent_id is not None:
-            await db.execute(
-                "INSERT OR REPLACE INTO meeting_live_status (zoom_meeting_id, live_status, agent_id, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-                (zoom_meeting_id, live_status, agent_id)
-            )
-        else:
-            await db.execute(
-                "INSERT OR REPLACE INTO meeting_live_status (zoom_meeting_id, live_status, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                (zoom_meeting_id, live_status)
-            )
+        await db.execute(
+            """
+            INSERT INTO meeting_live_status (zoom_meeting_id, live_status, agent_id, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(zoom_meeting_id) DO UPDATE SET
+                live_status = excluded.live_status,
+                agent_id = COALESCE(excluded.agent_id, meeting_live_status.agent_id),
+                actual_started_at = CASE
+                    WHEN excluded.live_status = 'started' THEN COALESCE(meeting_live_status.actual_started_at, CURRENT_TIMESTAMP)
+                    ELSE meeting_live_status.actual_started_at END,
+                ended_at = CASE
+                    WHEN excluded.live_status = 'ended' THEN CURRENT_TIMESTAMP
+                    ELSE meeting_live_status.ended_at END,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (zoom_meeting_id, live_status, agent_id),
+        )
         await db.commit()
     logger.info("Meeting %s live status updated to %s", zoom_meeting_id, live_status)
 
@@ -615,6 +572,46 @@ async def get_meeting_live_status(zoom_meeting_id: str) -> str:
         cur = await db.execute("SELECT live_status FROM meeting_live_status WHERE zoom_meeting_id = ?", (zoom_meeting_id,))
         row = await cur.fetchone()
         return row[0] if row else 'not_started'
+
+
+async def set_remote_launch_state(zoom_meeting_id: str, launch_request_id: str,
+                                  requested_by: int, live_status: str = "launch_requested",
+                                  error: Optional[str] = None):
+    """Persist remote launch metadata without storing the sensitive start URL."""
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute(
+            """
+            INSERT INTO meeting_live_status (
+                zoom_meeting_id, live_status, launch_request_id,
+                launch_requested_at, requested_by, last_remote_error, updated_at
+            ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(zoom_meeting_id) DO UPDATE SET
+                live_status = excluded.live_status,
+                launch_request_id = excluded.launch_request_id,
+                launch_requested_at = CURRENT_TIMESTAMP,
+                requested_by = excluded.requested_by,
+                last_remote_error = excluded.last_remote_error,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (zoom_meeting_id, live_status, launch_request_id, requested_by, error),
+        )
+        await db.commit()
+
+
+async def get_remote_launch_state(zoom_meeting_id: str) -> Dict:
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute(
+            """SELECT live_status, launch_request_id, launch_requested_at,
+                      actual_started_at, ended_at, requested_by, last_remote_error
+               FROM meeting_live_status WHERE zoom_meeting_id = ?""",
+            (zoom_meeting_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return {"live_status": "not_started"}
+        keys = ("live_status", "launch_request_id", "launch_requested_at",
+                "actual_started_at", "ended_at", "requested_by", "last_remote_error")
+        return dict(zip(keys, row))
 
 
 async def sync_meeting_live_status_from_zoom(zoom_client, zoom_meeting_id: str) -> str:
@@ -851,18 +848,27 @@ async def update_expired_meetings() -> Dict[str, int]:
 
 
 async def run_migrations(db):
-    """Run database migrations"""
+    """Run database migrations.
+
+    Each section is independently try/excepted so a failure migrating one
+    table (e.g. meetings) can't silently prevent later sections (e.g.
+    meeting_live_status) from running.
+    """
     try:
         # Check for status column
         cur = await db.execute("PRAGMA table_info(meetings)")
         columns = await cur.fetchall()
         column_names = [col[1] for col in columns]
         column_types = {col[1]: col[2] for col in columns}
-        
+
         if 'status' not in column_names:
             logger.info("Adding status column to meetings table")
             await db.execute("ALTER TABLE meetings ADD COLUMN status TEXT DEFAULT 'active'")
-        
+
+        if 'cloud_recording_data' not in column_names:
+            logger.info("Adding cloud_recording_data column to meetings table")
+            await db.execute("ALTER TABLE meetings ADD COLUMN cloud_recording_data TEXT")
+
         # Check if recording_status column exists in meetings table (migration needed)
         if 'recording_status' in column_names:
             logger.info("Migrating recording_status from meetings to meeting_live_status table")
@@ -876,13 +882,13 @@ async def run_migrations(db):
             # Remove recording_status column from meetings table
             logger.info("Dropping recording_status column from meetings table")
             await db.execute("ALTER TABLE meetings DROP COLUMN recording_status")
-        
+
         if 'updated_at' not in column_names:
             logger.info("Adding updated_at column to meetings table")
             await db.execute("ALTER TABLE meetings ADD COLUMN updated_at TIMESTAMP")
             # Set default value for existing records
             await db.execute("UPDATE meetings SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL")
-        
+
         # Check if created_by is still INTEGER, convert to TEXT
         if 'created_by' in column_types and column_types['created_by'].upper() == 'INTEGER':
             logger.info("Converting created_by column from INTEGER to TEXT")
@@ -893,11 +899,14 @@ async def run_migrations(db):
             await db.execute("DROP INDEX IF EXISTS idx_meetings_created_by")  # Drop any potential indexes
             await db.execute("ALTER TABLE meetings DROP COLUMN created_by")
             await db.execute("ALTER TABLE meetings RENAME COLUMN created_by_new TO created_by")
-            
+
         # Update existing records to have proper created_by values
         await db.execute("UPDATE meetings SET created_by = 'CreatedFromZoomApp' WHERE created_by IS NULL OR created_by = '0'")
         await db.execute("UPDATE meetings SET status = 'active' WHERE status IS NULL")
+    except Exception as e:
+        logger.exception("Migration of meetings table failed: %s", e)
 
+    try:
         # Check agents table for new columns
         cur = await db.execute("PRAGMA table_info(agents)")
         columns = await cur.fetchall()
@@ -914,7 +923,10 @@ async def run_migrations(db):
         if 'version' not in column_names:
             logger.info("Adding version column to agents table")
             await db.execute("ALTER TABLE agents ADD COLUMN version TEXT DEFAULT 'v1.0'")
+    except Exception as e:
+        logger.exception("Migration of agents table failed: %s", e)
 
+    try:
         # Check if meeting_live_status table exists
         cur = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='meeting_live_status'")
         table_exists = await cur.fetchone()
@@ -925,6 +937,8 @@ async def run_migrations(db):
                     zoom_meeting_id TEXT PRIMARY KEY,
                     live_status TEXT DEFAULT 'not_started',
                     recording_status TEXT DEFAULT 'stopped',
+                    recording_started_at TIMESTAMP,
+                    agent_id INTEGER,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -939,9 +953,23 @@ async def run_migrations(db):
             if 'recording_started_at' not in column_names:
                 logger.info("Adding recording_started_at column to meeting_live_status table")
                 await db.execute("ALTER TABLE meeting_live_status ADD COLUMN recording_started_at TIMESTAMP")
-        
+            if 'agent_id' not in column_names:
+                logger.info("Adding agent_id column to meeting_live_status table")
+                await db.execute("ALTER TABLE meeting_live_status ADD COLUMN agent_id INTEGER")
+            remote_columns = {
+                'launch_request_id': 'TEXT',
+                'launch_requested_at': 'TIMESTAMP',
+                'actual_started_at': 'TIMESTAMP',
+                'ended_at': 'TIMESTAMP',
+                'requested_by': 'INTEGER',
+                'last_remote_error': 'TEXT',
+            }
+            for column_name, column_type in remote_columns.items():
+                if column_name not in column_names:
+                    logger.info("Adding %s column to meeting_live_status table", column_name)
+                    await db.execute(f"ALTER TABLE meeting_live_status ADD COLUMN {column_name} {column_type}")
     except Exception as e:
-        logger.exception("Migration failed: %s", e)
+        logger.exception("Migration of meeting_live_status table failed: %s", e)
 
 
 # Shortlinks functions

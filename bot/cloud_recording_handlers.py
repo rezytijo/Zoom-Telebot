@@ -62,7 +62,6 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
             zoom_meeting_details = await zoom_client.get_meeting(meeting_id)
             meeting_status = zoom_meeting_details.get('status', 'unknown')
             participant_count = zoom_meeting_details.get('participants_count', 0)
-            start_url = zoom_meeting_details.get('start_url', '')
             join_url = zoom_meeting_details.get('join_url', '')
             meeting_settings = zoom_meeting_details.get('settings') or {}
             auto_recording_mode = (meeting_settings.get('auto_recording') or 'unknown').lower()
@@ -76,7 +75,6 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
             logger.error(f"Failed to get Zoom meeting details: {e}")
             meeting_status = 'unknown'
             participant_count = 0
-            start_url = ''
             join_url = ''
             recording_label = "Unknown"
 
@@ -122,11 +120,9 @@ async def _refresh_control_zoom_ui(c: CallbackQuery, meeting_id: str) -> None:
             if settings.zoom_control_mode.lower() == "agent":
                 kb_rows.append([InlineKeyboardButton(text="🔇 Mute All", callback_data=f"mute_all_participants:{meeting_id}")])
         else:
-            # Cloud mode: expose start_url for one-click host launch when available
-            if start_url:
-                kb_rows.append([InlineKeyboardButton(text="🚀 Mulai sebagai Host", url=start_url)])
-            # Fallback to API start if URL missing or user prefers inline action
-            kb_rows.append([InlineKeyboardButton(text="▶️ Start Meeting", callback_data=f"start_zoom_meeting:{meeting_id}")])
+            kb_rows.append([InlineKeyboardButton(text="🚀 Start pada Remote Zoom", callback_data=f"start_zoom_meeting:{meeting_id}")])
+            if settings.zoom_control_mode.lower() == "remote" and settings.zoom_remote_public_url:
+                kb_rows.append([InlineKeyboardButton(text="🖥️ Buka Remote Zoom", url=settings.zoom_remote_public_url)])
 
         # Always available actions
         kb_rows.extend([

@@ -9,6 +9,10 @@ def _is_agent_control_enabled() -> bool:
     return settings.zoom_control_mode.lower() == "agent"
 
 
+def _is_remote_control_enabled() -> bool:
+    return settings.zoom_control_mode.lower() == "remote"
+
+
 def main_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
     """Main menu keyboard (ringkas): create, shortener, list, info; admin adds backup + agent control."""
     keyboard = []
@@ -24,6 +28,8 @@ def main_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
         keyboard.append([InlineKeyboardButton(text="💾 Backup & Restore", callback_data="menu_backup")])
         if _is_agent_control_enabled():
             keyboard.append([InlineKeyboardButton(text="🟢 Agent Control ON", callback_data="noop")])
+        elif _is_remote_control_enabled():
+            keyboard.append([InlineKeyboardButton(text="🖥️ Remote Zoom ON", callback_data="noop")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

@@ -190,16 +190,16 @@ class ZoomClient:
             payload["start_time"] = start_time
         payload["timezone"] = "Asia/Jakarta"
         # sensible settings per user's request
-        auto_recording_mode = "cloud"
-        if getattr(settings, "zoom_control_mode", "cloud").lower() == "agent":
-            auto_recording_mode = "local"
+        auto_recording_mode = getattr(settings, "zoom_recording_mode", "cloud").lower()
+        if auto_recording_mode not in {"cloud", "local", "none"}:
+            auto_recording_mode = "cloud"
 
         payload["settings"] = {
             "host_video": True,
             "participant_video": True,
-            "join_before_host": False,
+            "join_before_host": getattr(settings, "zoom_join_before_host", False),
             "mute_upon_entry": True,
-            "waiting_room": False,
+            "waiting_room": getattr(settings, "zoom_waiting_room", True),
             "auto_start_ai_companion_questions": True,
             "auto_recording": auto_recording_mode,
         }
@@ -252,7 +252,7 @@ class ZoomClient:
 
     async def get_short_url(self, meeting: Dict[str, Any]) -> str:
         # Zoom doesn't provide a 'short url' directly in API; we return join_url
-        return meeting.get("join_url") or meeting.get("start_url") or ""
+        return meeting.get("join_url") or ""
 
     async def delete_meeting(self, meeting_id: str) -> bool:
         self.logger.info("Deleting meeting meeting_id=%s", meeting_id)
@@ -331,34 +331,24 @@ class ZoomClient:
             return False
 
 
-    async def start_meeting(self, meeting_id: str) -> Dict[str, Any]:
-        """Start a scheduled Zoom meeting mentally and physically.
-
-        Returns meeting details with start_url and join_url.
-        """
-        self.logger.info("Opening doors (JBH) for meeting %s", meeting_id)
+    async def prepare_remote_meeting(self, meeting_id: str) -> Dict[str, Any]:
+        """Enforce host-first access before launching the remote Zoom client."""
+        self.logger.info("Preparing meeting %s for remote host", meeting_id)
         token = await self.ensure_token()
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        
-        # We cannot "start" via /status API. We just patch JBH to True.
-        patch_url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
-        patch_payload = {
+        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
+        payload = {
             "settings": {
-                "join_before_host": True,
-                "jbh_time": 0
+                "join_before_host": False,
+                "waiting_room": getattr(settings, "zoom_waiting_room", True),
             }
         }
-        
         async with aiohttp.ClientSession() as session:
-            async with session.patch(patch_url, json=patch_payload, headers=headers) as patch_resp:
-                if patch_resp.status in (200, 204):
-                    self.logger.info("Meeting %s join_before_host enabled automatically", meeting_id)
-                    # Returning dummy data because get_meeting is called separately anyway
-                    return {"status": "started"}
-                else:
-                    text = await patch_resp.text()
-                    self.logger.warning("Failed to enable JBH for meeting %s: %s - %s", meeting_id, patch_resp.status, text)
-                    raise Exception(f"Failed to open meeting room: {patch_resp.status} - {text}")
+            async with session.patch(url, json=payload, headers=headers) as response:
+                if response.status not in (200, 204):
+                    body = await response.text()
+                    raise RuntimeError(f"Gagal menerapkan host-first: Zoom HTTP {response.status}: {body}")
+        return await self.get_meeting(meeting_id)
 
 
     async def get_meeting_participants(self, meeting_id: str) -> List[Dict[str, Any]]:

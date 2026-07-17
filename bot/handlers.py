@@ -6,11 +6,11 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from typing import Optional, List, Dict
 
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, set_remote_launch_state, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons, main_menu_keyboard, meetings_menu_keyboard, users_menu_keyboard, backup_menu_keyboard, info_menu_keyboard, shortener_menu_keyboard
 from config import settings
 from bot.auth import is_allowed_to_create, is_owner_or_admin, is_registered_user
-from zoom import zoom_client
+from zoom import zoom_client, remote_zoom_client, RemoteZoomError
 import logging
 
 import re
@@ -113,6 +113,10 @@ def _is_agent_control_enabled() -> bool:
 def is_agent_control_enabled() -> bool:
     """Public helper used across handlers to check agent mode."""
     return _is_agent_control_enabled()
+
+
+def is_remote_control_enabled() -> bool:
+    return settings.zoom_control_mode.lower() == "remote"
 
 
 async def _agent_api_disabled_response(callback: CallbackQuery) -> None:
@@ -329,106 +333,119 @@ async def cb_control_zoom(c: CallbackQuery):
 
     meeting_id = c.data.split(':', 1)[1]
 
-    # Find meeting
-    meetings = await list_meetings()
-    meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
-    if not meeting:
-        await c.answer("Meeting tidak ditemukan")
-        return
-
-    topic = meeting.get('topic', 'No Topic')
-    join_url = meeting.get('join_url', '')
-
-    # Get meeting status from Zoom API
     try:
-        zoom_meeting_details = await zoom_client.get_meeting(meeting_id)
-        meeting_status = zoom_meeting_details.get('status', 'unknown')
-        participant_count = zoom_meeting_details.get('participants_count', 0)
-        start_url = zoom_meeting_details.get('start_url', '')
-        join_url = zoom_meeting_details.get('join_url', '')
+        # Find meeting
+        meetings = await list_meetings()
+        meeting = next((m for m in meetings if m.get('zoom_meeting_id') == str(meeting_id)), None)
+        if not meeting:
+            await c.answer("Meeting tidak ditemukan")
+            return
+
+        topic = meeting.get('topic', 'No Topic')
+        join_url = meeting.get('join_url', '')
+
+        # Get meeting status from Zoom API
+        try:
+            zoom_meeting_details = await zoom_client.get_meeting(meeting_id)
+            meeting_status = zoom_meeting_details.get('status', 'unknown')
+            participant_count = zoom_meeting_details.get('participants_count', 0)
+            join_url = zoom_meeting_details.get('join_url', '')
+        except Exception as e:
+            logger.error(f"Failed to get Zoom meeting details: {e}")
+            meeting_status = 'unknown'
+            participant_count = 0
+            join_url = ''
+
+        live_status = await get_meeting_live_status(meeting_id)
+        if meeting_status == 'started' and live_status != 'started':
+            await update_meeting_live_status(meeting_id, 'started')
+            live_status = 'started'
+
+        # Get recording status from DB only (Zoom API doesn't provide real-time recording status)
+        current_recording_status = await get_meeting_recording_status(meeting_id) or 'stopped'
+
+        text = (
+            f"🎥 <b>Kontrol Zoom Meeting</b>\n\n"
+            f"<b>{topic}</b>\n"
+            f"🆔 Meeting ID: <code>{meeting_id}</code>\n"
+            f"📊 Status: {meeting_status.title()}\n"
+            f"🖥️ Remote: {live_status.replace('_', ' ').title()}\n"
+            f"👥 Participants: {participant_count}\n"
+            f"🎥 Recording: {current_recording_status.title()}\n"
+            f"🔗 {join_url}\n\n"
+            "Pilih aksi kontrol:"
+        )
+
+        # current_recording_status from DB
+
+        # Create control buttons based on meeting status
+        kb_rows = []
+
+        if meeting_status == 'started':
+            kb_rows.append([InlineKeyboardButton(text="⏹️ End Meeting", callback_data=f"end_zoom_meeting:{meeting_id}")])
+
+            # Dynamic recording controls based on status
+            if current_recording_status == 'stopped':
+                # Show Start Recording only
+                kb_rows.append([InlineKeyboardButton(text="⏺️ Start Recording", callback_data=f"cloud_start_record:{meeting_id}")])
+                # Check if there's a completed recording available for download
+                try:
+                    recording_info = await zoom_client.get_meeting_recording_status(meeting_id)
+                    if recording_info and recording_info.get('recording_files'):
+                        # Add download link to Zoom cloud recordings
+                        kb_rows.append([InlineKeyboardButton(text="📥 Download Hasil Recording", url=f"https://zoom.us/recording")])
+                except Exception as e:
+                    logger.debug(f"Could not check recording files: {e}")
+            elif current_recording_status == 'recording':
+                # Show Pause and Stop
+                kb_rows.append([
+                    InlineKeyboardButton(text="⏸️ Pause Recording", callback_data=f"cloud_pause_record:{meeting_id}"),
+                    InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"cloud_stop_record:{meeting_id}")
+                ])
+            elif current_recording_status == 'paused':
+                # Show Resume and Stop
+                kb_rows.append([
+                    InlineKeyboardButton(text="▶️ Resume Recording", callback_data=f"cloud_resume_record:{meeting_id}"),
+                    InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"cloud_stop_record:{meeting_id}")
+                ])
+
+            if is_agent_control_enabled():
+                kb_rows.append([InlineKeyboardButton(text="🔇 Mute All", callback_data=f"mute_all_participants:{meeting_id}")])
+        else:
+            if is_remote_control_enabled():
+                kb_rows.append([InlineKeyboardButton(text="🚀 Start pada Remote Zoom", callback_data=f"start_zoom_meeting:{meeting_id}")])
+                if settings.zoom_remote_public_url:
+                    kb_rows.append([InlineKeyboardButton(text="🖥️ Buka Remote Zoom", url=settings.zoom_remote_public_url)])
+                kb_rows.append([InlineKeyboardButton(text="♻️ Restart Remote Zoom", callback_data=f"restart_remote_zoom:{meeting_id}")])
+            else:
+                kb_rows.append([InlineKeyboardButton(text="▶️ Start Meeting", callback_data=f"start_zoom_meeting:{meeting_id}")])
+
+        # Always available actions
+        kb_rows.extend([
+            [InlineKeyboardButton(text="🔄 Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
+            [InlineKeyboardButton(text="📊 Meeting Details", callback_data=f"zoom_meeting_details:{meeting_id}")],
+            [InlineKeyboardButton(text="⬅️ Kembali ke Daftar", callback_data="list_meetings")]
+        ])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+        await _safe_edit_or_fallback(c, text, reply_markup=kb)
+        await c.answer()
     except Exception as e:
-        logger.error(f"Failed to get Zoom meeting details: {e}")
-        meeting_status = 'unknown'
-        participant_count = 0
-        start_url = ''
-        join_url = ''
-    
-    # Get recording status from DB only (Zoom API doesn't provide real-time recording status)
-    current_recording_status = await get_meeting_recording_status(meeting_id) or 'stopped'
-
-    text = (
-        f"🎥 <b>Kontrol Zoom Meeting</b>\n\n"
-        f"<b>{topic}</b>\n"
-        f"🆔 Meeting ID: <code>{meeting_id}</code>\n"
-        f"📊 Status: {meeting_status.title()}\n"
-        f"👥 Participants: {participant_count}\n"
-        f"🎥 Recording: {current_recording_status.title()}\n"
-        f"🔗 {join_url}\n\n"
-        "Pilih aksi kontrol:"
-    )
-
-    # current_recording_status from DB
-    
-    # Create control buttons based on meeting status
-    kb_rows = []
-
-    if meeting_status == 'started':
-        kb_rows.append([InlineKeyboardButton(text="⏹️ End Meeting", callback_data=f"end_zoom_meeting:{meeting_id}")])
-        
-        # Dynamic recording controls based on status
-        if current_recording_status == 'stopped':
-            # Show Start Recording only
-            kb_rows.append([InlineKeyboardButton(text="⏺️ Start Recording", callback_data=f"cloud_start_record:{meeting_id}")])
-            # Check if there's a completed recording available for download
-            try:
-                recording_info = await zoom_client.get_meeting_recording_status(meeting_id)
-                if recording_info and recording_info.get('recording_files'):
-                    # Add download link to Zoom cloud recordings
-                    kb_rows.append([InlineKeyboardButton(text="📥 Download Hasil Recording", url=f"https://zoom.us/recording")])
-            except Exception as e:
-                logger.debug(f"Could not check recording files: {e}")
-        elif current_recording_status == 'recording':
-            # Show Pause and Stop
-            kb_rows.append([
-                InlineKeyboardButton(text="⏸️ Pause Recording", callback_data=f"cloud_pause_record:{meeting_id}"),
-                InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"cloud_stop_record:{meeting_id}")
-            ])
-        elif current_recording_status == 'paused':
-            # Show Resume and Stop
-            kb_rows.append([
-                InlineKeyboardButton(text="▶️ Resume Recording", callback_data=f"cloud_resume_record:{meeting_id}"),
-                InlineKeyboardButton(text="⏹️ Stop Recording", callback_data=f"cloud_stop_record:{meeting_id}")
-            ])
-        
-        if is_agent_control_enabled():
-            kb_rows.append([InlineKeyboardButton(text="🔇 Mute All", callback_data=f"mute_all_participants:{meeting_id}")])
-    else:
-        # Cloud mode: expose start_url for one-click host launch when available
-        if start_url:
-            kb_rows.append([InlineKeyboardButton(text="🚀 Mulai sebagai Host", url=start_url)])
-        # Fallback to API start if URL missing or user prefers inline action
-        kb_rows.append([InlineKeyboardButton(text="▶️ Start Meeting", callback_data=f"start_zoom_meeting:{meeting_id}")])
-
-    # Always available actions
-    kb_rows.extend([
-        [InlineKeyboardButton(text="🔄 Refresh Status", callback_data=f"control_zoom:{meeting_id}")],
-        [InlineKeyboardButton(text="📊 Meeting Details", callback_data=f"zoom_meeting_details:{meeting_id}")],
-        [InlineKeyboardButton(text="⬅️ Kembali ke Daftar", callback_data="list_meetings")]
-    ])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-
-    await _safe_edit_or_fallback(c, text, reply_markup=kb)
-    await c.answer()
+        logger.exception("cb_control_zoom failed for meeting %s: %s", meeting_id, e)
+        try:
+            await c.answer(f"❌ Gagal membuka kontrol meeting: {e}", show_alert=True)
+        except Exception:
+            logger.debug("cb_control_zoom: failed to answer callback after error for meeting %s", meeting_id)
 
 
 # ==========================================
-# Zoom Control Handlers - Cloud Mode API
+# Zoom Control Handlers - Remote Kasm Host
 # ==========================================
 
 @router.callback_query(lambda c: c.data and c.data.startswith('start_zoom_meeting:'))
 async def cb_start_zoom_meeting(c: CallbackQuery):
-    """Start a Zoom meeting via Zoom API and provide start URL for host."""
+    """Launch the meeting on the Kasm remote host and await Zoom confirmation."""
     if c.from_user is None:
         await c.answer("Informasi pengguna tidak tersedia")
         return
@@ -440,11 +457,15 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
 
     meeting_id = c.data.split(':', 1)[1]
 
-    await c.answer("Memulai meeting...")
+    if not is_remote_control_enabled():
+        await c.answer("Remote Zoom tidak aktif.", show_alert=True)
+        return
+
+    await c.answer("Membuka Zoom pada remote host...")
 
     try:
-        # Get meeting details first to retrieve start_url
-        meeting_details = await zoom_client.get_meeting(meeting_id)
+        await remote_zoom_client.health()
+        meeting_details = await zoom_client.prepare_remote_meeting(meeting_id)
         
         if not meeting_details:
             text = "❌ Meeting tidak ditemukan atau sudah dihapus."
@@ -454,34 +475,27 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
             await _safe_edit_or_fallback(c, text, reply_markup=kb)
             return
         
-        # Start the meeting via Zoom API
-        await zoom_client.start_meeting(meeting_id)
-        
-        # Securly update DB states to make UI responsive immediately
-        from db import update_meeting_live_status
-        await update_meeting_live_status(meeting_id, 'started')
-        
-        # Extract URLs from meeting details
         start_url = meeting_details.get('start_url', '')
-        join_url = meeting_details.get('join_url', '')
         topic = meeting_details.get('topic', 'Meeting')
-        
+
         if start_url:
+            request_id = str(uuid.uuid4())
+            await remote_zoom_client.launch_meeting(meeting_id, start_url, c.from_user.id)
+            await set_remote_launch_state(meeting_id, request_id, c.from_user.id)
             text = (
-                "✅ <b>Meeting Berhasil Diaktifkan!</b>\n\n"
+                "🚀 <b>Zoom sedang dibuka pada Remote Host</b>\n\n"
                 f"📌 <b>Topic:</b> {topic}\n"
-                f"🔗 <b>Join URL:</b> <code>{join_url}</code>\n\n"
-                "🔓 <b>Status: Ruangan Terbuka!</b>\n"
-                "Peserta sudah bisa langsung masuk & berbicara tanpa menunggu Anda login sebagai Host.\n\n"
-                "🏢 <i>Opsional:</i> Klik tombol <b>🚀 Mulai sebagai Host</b> di bawah ini HANYA JIKA Anda ingin merangkap masuk bertindak sebagai admin Zoom di ruangan tersebut."
+                "🟡 <b>Status:</b> Menunggu Zoom mengonfirmasi host masuk.\n\n"
+                "Akses peserta belum dibuka. Gunakan konsol remote jika Zoom meminta konfirmasi."
             )
-            
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🚀 Mulai sebagai Host", url=start_url)],
-                [InlineKeyboardButton(text="📋 Join URL (Copy)", url=join_url)],
-                [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
-                [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
+            rows = []
+            if settings.zoom_remote_public_url:
+                rows.append([InlineKeyboardButton(text="🖥️ Buka Remote Zoom", url=settings.zoom_remote_public_url)])
+            rows.extend([
+                [InlineKeyboardButton(text="🔄 Cek Status", callback_data=f"control_zoom:{meeting_id}")],
+                [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")],
             ])
+            kb = InlineKeyboardMarkup(inline_keyboard=rows)
         else:
             text = "❌ Gagal memulai meeting. Start URL tidak tersedia."
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -490,14 +504,27 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
             ])
 
     except Exception as e:
-        logger.error(f"Failed to start Zoom meeting {meeting_id}: {e}")
-        text = f"❌ <b>Error:</b> {str(e)}"
+        logger.error("Failed to launch remote Zoom meeting %s: %s", meeting_id, type(e).__name__)
+        await set_remote_launch_state(meeting_id, str(uuid.uuid4()), c.from_user.id, "failed", type(e).__name__)
+        text = "❌ <b>Remote Zoom gagal membuka meeting.</b> Periksa status service dan coba lagi."
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
             [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
         ])
 
     await _safe_edit_or_fallback(c, text, reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('restart_remote_zoom:'))
+async def cb_restart_remote_zoom(c: CallbackQuery):
+    if c.from_user is None or not is_owner_or_admin(await get_user_by_telegram_id(c.from_user.id)):
+        await c.answer("Aksi ini hanya untuk Admin/Owner.", show_alert=True)
+        return
+    try:
+        await remote_zoom_client.restart_zoom()
+        await c.answer("Remote Zoom direstart.", show_alert=True)
+    except RemoteZoomError:
+        await c.answer("Gagal merestart Remote Zoom.", show_alert=True)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('end_zoom_meeting:'))
@@ -519,6 +546,12 @@ async def cb_end_zoom_meeting(c: CallbackQuery):
     try:
         # End the meeting via Zoom API
         result = await zoom_client.end_meeting(meeting_id)
+        if is_remote_control_enabled():
+            try:
+                await remote_zoom_client.stop_meeting(meeting_id)
+            except RemoteZoomError:
+                logger.warning("Meeting ended but remote Zoom client could not be stopped")
+        await update_meeting_live_status(meeting_id, 'ended')
         text = "✅ <b>Meeting berhasil diakhiri.</b>"
 
     except Exception as e:
@@ -614,10 +647,7 @@ async def cb_zoom_meeting_details(c: CallbackQuery):
         text += f"🎥 <b>Recording:</b> {details.get('recording_enabled', False)}\n"
         text += f"🔗 <b>Join URL:</b> {details.get('join_url', 'N/A')}\n"
         
-        # Add Start URL if available
-        start_url = details.get('start_url')
-        if start_url:
-            text += f"▶️ <b>Start URL:</b> {start_url}\n"
+        # start_url is intentionally never rendered in Telegram; it grants host access.
 
         if details.get('settings'):
             settings = details['settings']
@@ -1163,8 +1193,8 @@ async def edit_meeting_time(msg: Message, state: FSMContext):
         await msg.reply("Format waktu tidak valid. Gunakan HH:MM (24 jam).")
         return
 
-    # Store the new time
-    await state.update_data(new_time=t)
+    # Store the new time (as ISO string; time objects aren't JSON serializable)
+    await state.update_data(new_time=t.isoformat())
 
     data = await state.get_data()
     meeting_id = data.get('edit_meeting_id')
@@ -1582,7 +1612,7 @@ async def cmd_zoom(msg: Message):
             
             # Save to DB
             zoom_id = meeting.get('id')
-            join_url = meeting.get('join_url') or meeting.get('start_url') or ''
+            join_url = meeting.get('join_url') or ''
             if zoom_id:
                 await add_meeting(str(zoom_id), topic, start_time_iso, join_url, msg.from_user.id)
             
@@ -1819,20 +1849,23 @@ async def _safe_edit_or_fallback(c: CallbackQuery, text: str, reply_markup=None,
                 except Exception:
                     pass
                 return
+            logger.error(f"_safe_edit_or_fallback: Edit failed with TelegramBadRequest: {e}")
             # couldn't edit (maybe too old or protected), try to reply instead
             try:
                 await m.reply(text, **kwargs)
                 return
-            except Exception:
-                # fall through to answering the callback below
-                logger.debug("_edit_or_fallback: reply() failed, falling back to callback answer")
+            except Exception as re:
+                logger.error(f"_safe_edit_or_fallback: Reply fallback failed: {re}")
+        except Exception as ge:
+            logger.error(f"_safe_edit_or_fallback: Edit failed with general exception: {ge}")
+    else:
+        logger.error(f"_safe_edit_or_fallback: Message object is not an instance of Message (type: {type(m)})")
 
     # fallback to answering the callback (no edit available)
     try:
-        await c.answer(text)
-    except Exception:
-        # avoid raising during callback handling; just log the issue
-        logger.debug("_safe_edit_or_fallback: c.answer() failed for callback with data=%s", getattr(c, 'data', None))
+        await c.answer(text[:100])  # limit text length for safety
+    except Exception as ce:
+        logger.error(f"_safe_edit_or_fallback: Callback answer failed: {ce}")
 
 
 class MeetingStates(StatesGroup):
@@ -1975,7 +2008,7 @@ async def cb_confirm_create(c: CallbackQuery, state: FSMContext):
         await c.answer("Gagal membuat meeting")
         return
 
-    join = meeting.get('join_url') or meeting.get('start_url') or ''
+    join = meeting.get('join_url') or ''
     passcode = meeting.get('password')
 
     # Save to DB

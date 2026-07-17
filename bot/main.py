@@ -18,9 +18,11 @@ from bot.background_tasks import start_background_tasks, stop_background_tasks
 from bot.background_tasks import start_background_tasks, stop_background_tasks
 from zoom import zoom_client
 from scripts import check_dependencies
+from bot.zoom_webhook import start_zoom_webhook_server
 
 
 logger = logging.getLogger(__name__)
+_zoom_webhook_runner = None
 
 
 logger = logging.getLogger(__name__)
@@ -77,7 +79,9 @@ async def background_check_timeouts():
 
 
 async def on_startup(bot: Bot):
+    global _zoom_webhook_runner
     logger.info("Bot starting...")
+    _zoom_webhook_runner = await start_zoom_webhook_server()
     
     # Run initial sync on startup
     logger.info("Running initial meeting sync on startup...")
@@ -98,6 +102,14 @@ async def on_startup(bot: Bot):
     # Start background tasks (cloud recording sync, cleanup, etc)
     await start_background_tasks()
     logger.info("Background task manager started")
+
+
+async def on_shutdown(bot: Bot):
+    global _zoom_webhook_runner
+    await stop_background_tasks()
+    if _zoom_webhook_runner is not None:
+        await _zoom_webhook_runner.cleanup()
+        _zoom_webhook_runner = None
 
 
 async def main():
@@ -176,6 +188,7 @@ async def main():
     
     # Register startup handler
     dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
 
     try:
         # run polling by default

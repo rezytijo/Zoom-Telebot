@@ -1,5 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+.gocache/
+.gotmp/
 *.py[cod]
 *$py.class
 
@@ -152,7 +154,9 @@ backup_*/
 dev_run.py
 run_dev.py
 test_*.py
-tests/
+!tests/
+tests/*.json
+tests/*.session
 .pytest_cache/
 __pycache__/
 *.pyc
@@ -204,6 +208,9 @@ add_dummy_users.py
 secrets.yaml
 secrets.yml
 credentials.json
+tg_credentials.json
+*.session
+*.session-journal
 client_secret.json
 *.pem
 *.key
@@ -242,3 +249,4 @@ graphify-out/
 graphify-output/
 graphify-output/**
 run_graphify.py
+.pytest-tmp-codex/test_remote_state_preserves_recurrent

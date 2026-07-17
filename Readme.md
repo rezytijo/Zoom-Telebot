@@ -426,7 +426,9 @@ docker compose up -d        # Docker Compose orchestration
 - **Alert System**: Notifikasi ke Admin jika ditemukan critical vulnerability.
 
 #### 🧪 Automated Testing
-- **FSM Tests**: Test suite awal untuk memvalidasi alur pembuatan meeting (Topic -> Date -> Time).
+- **FSM & Integration Tests**: Test suite menggunakan `pytest` untuk validasi FSM flow.
+- **Telegram Bot Integration Test (Basic Flow & Deletion)**: Test script (`tests/test_bot_integration.py`) berbasis `Telethon` yang secara otomatis menjalankan bot, mendaftarkan/melakukan whitelist akun Telegram client secara langsung di SQLite, lalu mengetes seluruh alur (menekan inline button, FSM flow, membuat meeting Zoom, menghapus via `/zoom_del`, dan menghapus via inline list button).
+- **Telegram Bot Zoom Controls & Meeting Details Test**: Test script (`tests/test_meeting_details_controls.py`) berbasis `Telethon` yang memverifikasi navigasi ke menu kontrol meeting, mengecek detail status Zoom, membuka menu detail meeting (passcode, host, settings), dan navigasi kembali.
 - **Test Runner**: Integrasi dengan `pytest` dan `pytest-asyncio`.
 
 ---

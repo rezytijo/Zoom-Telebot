@@ -1,81 +1,66 @@
-# Dockerfile for Zoom-Telebot SOC
-FROM python:3.11-slim AS base
+# syntax=docker/dockerfile:1.7
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONHASHSEED=random
-ENV PIP_NO_CACHE_DIR=1
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+FROM python:3.11-slim AS production-deps
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    curl \
-    gosu \
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/venv
+
+RUN python -m venv "$VIRTUAL_ENV"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+COPY requirements.txt /tmp/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip==26.1.2 \
+    && pip install -r /tmp/requirements.txt
+
+
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONHASHSEED=random \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app user with home directory
-RUN groupadd -r botuser && useradd -r -g botuser -m -d /home/botuser botuser
+RUN groupadd --system botuser \
+    && useradd --system --gid botuser --create-home --home-dir /home/botuser botuser
 
-# Set work directory
+COPY --from=production-deps /opt/venv /opt/venv
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip==26.1.2 setuptools==82.0.1 wheel==0.47.0 && \
-    pip install --no-cache-dir -r requirements.txt
+FROM runtime AS production
 
-# Production stage
-FROM base AS production
+COPY --chown=botuser:botuser . /app
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# Copy application code
-COPY . .
+RUN mkdir -p /app/data /app/logs \
+    && sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod 755 /usr/local/bin/docker-entrypoint.sh \
+    && chown botuser:botuser /app \
+    && chown -R botuser:botuser /app/data /app/logs
 
-# Compile Python bytecode for faster startup
-RUN python -m compileall .
-
-# Create necessary directories
-RUN mkdir -p /app/data /app/logs
-
-# Set permissions
-RUN chown -R botuser:botuser /app
-
-# Copy entrypoint script
-COPY docker/docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# Set entrypoint (runs as root initially)
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-# Switch to non-root user (this will be done in entrypoint)
-# USER botuser
 
-# Development stage (optional)
-FROM base AS development
+FROM production-deps AS development-deps
 
-# Install additional dev dependencies
-RUN pip install --no-cache-dir \
-    watchdog \
-    pytest \
-    pytest-asyncio
+COPY requirements-dev.txt /tmp/requirements-dev.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /tmp/requirements-dev.txt
 
-# Copy application code
-COPY . .
 
-# Compile Python bytecode for faster startup
-RUN python -m compileall .
+FROM runtime AS development
 
-# Create necessary directories
-RUN mkdir -p /app/data /app/logs
+COPY --from=development-deps /opt/venv /opt/venv
+COPY --chown=botuser:botuser . /app
+RUN mkdir -p /app/data /app/logs \
+    && chown -R botuser:botuser /app
 
-# Set permissions
-RUN chown -R botuser:botuser /app
-
-# Switch to non-root user
 USER botuser
-
-# Development command
 CMD ["python", "dev.py", "run"]

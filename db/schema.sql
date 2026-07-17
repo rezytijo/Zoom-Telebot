@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS meeting_live_status (
     recording_status TEXT DEFAULT 'stopped', -- stopped, recording, paused
     recording_started_at TIMESTAMP,        -- First time recording was started
     agent_id INTEGER,                      -- ✨ NEW v1.1: Agent used for this meeting (FK to agents.id)
+    launch_request_id TEXT,
+    launch_requested_at TIMESTAMP,
+    actual_started_at TIMESTAMP,
+    ended_at TIMESTAMP,
+    requested_by INTEGER,
+    last_remote_error TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

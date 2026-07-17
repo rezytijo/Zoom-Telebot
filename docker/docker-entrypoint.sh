@@ -62,7 +62,7 @@ fi
 # Validate environment (optional - can be disabled)
 if [ "${SKIP_ENV_VALIDATION}" != "true" ]; then
     echo "🔍 Validating environment..."
-    if ! python setup.py; then
+    if ! gosu botuser python scripts/setup.py; then
         echo "❌ Environment validation failed!"
         echo "   Check your .env file and try again"
         exit 1
@@ -74,12 +74,10 @@ echo "✅ Environment ready!"
 # Switch to botuser and execute the main command
 echo "🚀 Starting bot..."
 
-# For debugging, try running as root first
-echo "Running as root for testing..."
 if [ $# -eq 0 ]; then
     echo "No arguments provided, using default command: python run.py"
-    exec python run.py
+    exec gosu botuser python run.py
 else
     echo "Using provided arguments: $@"
-    exec "$@"
+    exec gosu botuser "$@"
 fi

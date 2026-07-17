@@ -1,0 +1,7 @@
+-r requirements.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
+watchdog==6.0.0
+pip-audit==2.10.1
+telethon>=1.35.0

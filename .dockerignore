@@ -25,6 +25,10 @@ coverage.xml
 *.cover
 *.log
 .cache
+.gocache/
+.gotmp/
+**/.gocache/
+**/.gotmp/
 .mypy_cache
 .dmypy_cache
 
@@ -68,12 +72,16 @@ run_dev.py
 test_*.py
 tests/
 .pytest_cache/
+graphify-out/
+pytest_output*.txt
 
 # Dummy/test files
 add_dummy_users.py
 
 # Logs and data directories
 logs/
+data/*.db
+data/*.db-journal
 # keep `data/` included in build context (contains committed data such as data/shorteners.json)
 
 
