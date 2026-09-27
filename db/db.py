@@ -3,6 +3,7 @@ from typing import Optional, List, Dict
 from config import settings
 import logging
 import os
+import sqlite3
 import zipfile
 import json
 from datetime import datetime
@@ -403,13 +404,6 @@ async def remove_agent(agent_id: int):
     logger.info("Agent %s removed", agent_id)
 
 
-async def update_agent_last_seen(agent_id: int):
-    logger.debug("update_agent_last_seen %s", agent_id)
-    async with aiosqlite.connect(settings.db_path) as db:
-        await db.execute("UPDATE agents SET last_seen = CURRENT_TIMESTAMP WHERE id = ?", (agent_id,))
-        await db.commit()
-
-
 async def update_meeting_status(zoom_meeting_id: str, status: str):
     """Update meeting status (active, deleted, expired)"""
     logger.debug("update_meeting_status zoom_id=%s status=%s", zoom_meeting_id, status)
@@ -612,6 +606,40 @@ async def get_remote_launch_state(zoom_meeting_id: str) -> Dict:
         keys = ("live_status", "launch_request_id", "launch_requested_at",
                 "actual_started_at", "ended_at", "requested_by", "last_remote_error")
         return dict(zip(keys, row))
+
+async def list_meetings_pending_launch() -> List[Dict]:
+    """List launches still awaiting host confirmation, oldest first.
+
+    Only live_status='launch_requested' qualifies. Reading launch_requested_at
+    back as a datetime rather than a string is what lets the caller apply the
+    host-confirm timeout; SQLite hands back CURRENT_TIMESTAMP as text.
+    """
+    async with aiosqlite.connect(
+        settings.db_path, detect_types=sqlite3.PARSE_DECLTYPES
+    ) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT zoom_meeting_id, launch_requested_at, requested_by
+               FROM meeting_live_status
+               WHERE live_status = 'launch_requested'""",
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+async def mark_remote_launch_failed(zoom_meeting_id: str, reason: str):
+    """Mark a pending launch as failed, recording why.
+
+    Guards on live_status='launch_requested' so a late failure cannot overwrite
+    a meeting that already reached 'started' (webhook may have won the race).
+    """
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute(
+            """UPDATE meeting_live_status
+               SET live_status = 'failed', last_remote_error = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE zoom_meeting_id = ? AND live_status = 'launch_requested'""",
+            (reason, zoom_meeting_id),
+        )
+        await db.commit()
 
 
 async def sync_meeting_live_status_from_zoom(zoom_client, zoom_meeting_id: str) -> str:

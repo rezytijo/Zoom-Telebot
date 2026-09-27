@@ -10,6 +10,23 @@ from config import settings
 # Setup logger
 logger = get_logger(__name__)
 
+def _version_sort_key(version: str):
+    """Order version strings numerically so max() picks the real highest.
+
+    pip reports fix versions like "3.14.3" or "26.2.0" and occasionally
+    post-releases like "2026.3.post1". Plain string comparison puts
+    "2026.10" below "2026.9", so the numeric segments are compared as
+    numbers and non-numeric suffixes sort below the plain release.
+    """
+    parts = []
+    for seg in version.replace("-", ".").split("."):
+        if seg.isdigit():
+            parts.append((1, int(seg), ""))
+        else:
+            # a / b / rc / post suffix: sorts after the numeric core
+            parts.append((0, 0, seg))
+    return parts
+
 async def check_dependencies():
     """
     Checks for:
@@ -55,14 +72,37 @@ async def check_dependencies():
                         vulns = item.get('vulns', [])
                         if not vulns:
                             continue
-                            
+                        
                         pkg = item.get('name', 'unknown')
                         ver = item.get('version', '?')
                         
-                        vuln_ids = ", ".join([v.get('id', '') for v in vulns])
-                        fix_vers = ", ".join([str(v.get('fix_versions', [])) for v in vulns])
+                        # The same advisory ID can appear several times for one
+                        # package (duplicate aliases in the OSV feed, or one ID
+                        # resolved from several fix records) and each copy can
+                        # carry a different fix_versions list. Keying on the ID
+                        # alone produced alerts like "PYSEC-x, PYSEC-x, PYSEC-x"
+                        # with a wall of near-identical fix lists, which reads as
+                        # several distinct problems when it is one. Merge on the
+                        # ID and take the highest fix version across the copies.
+                        merged: dict[str, str] = {}
+                        for v in vulns:
+                            vid = v.get('id', 'unknown')
+                            fixes = [str(x) for x in v.get('fix_versions', []) if x]
+                            if not fixes:
+                                best = ""
+                            else:
+                                best = max(fixes, key=_version_sort_key)
+                            if vid not in merged or (best and not merged[vid]):
+                                merged[vid] = best
+                            elif best:
+                                merged[vid] = max(merged[vid], best, key=_version_sort_key)
                         
-                        report.append(f"- <code>{pkg}</code> ({ver}): {vuln_ids}. Fix: {fix_vers}")
+                        vuln_ids = ", ".join(merged)
+                        fix_vers = ", ".join(
+                            f"fix>={v}" if v else "no fix" for v in merged.values()
+                        )
+                        
+                        report.append(f"- <code>{pkg}</code> ({ver}): {vuln_ids}. {fix_vers}")
                     report.append("")
             except json.JSONDecodeError:
                 # If stdout isn't JSON, maybe it failed strictly

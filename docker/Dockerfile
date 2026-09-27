@@ -11,7 +11,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 COPY requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip==26.1.2 \
+    pip install --upgrade pip==26.2.1 setuptools==84.0.0 \
     && pip install -r /tmp/requirements.txt
 
 

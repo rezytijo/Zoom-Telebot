@@ -56,9 +56,65 @@ services:
           cpus: '0.25'
 
     depends_on:
-      zoom-remote:
-        condition: service_healthy
+      # The host is a plain HTTP service and starts in under a second, so
+      # ordering buys nothing here. Gating startup on its health check would
+      # also block the bot whenever the host is slow, for no benefit.
+      - zoom-browser
 
+  # Headless Zoom Web host: the default since v2026.09.26c. Same HTTP contract
+  # as the Kasm controller, so the bot needs no code change - only
+  # ZOOM_REMOTE_BASE_URL in .env.
+  #
+  # The container itself stays up but costs almost nothing: Chromium is started
+  # on the first launch and torn down when the meeting ends (see
+  # ZoomBrowserHost._ensure_started). Idle is a bare aiohttp server; only a live
+  # meeting pays for a browser.
+  zoom-browser:
+    build:
+      context: .
+      dockerfile: remote_browser/Dockerfile
+    container_name: zoom-browser
+    restart: unless-stopped
+    environment:
+      - BROWSER_API_TOKEN=${ZOOM_REMOTE_API_TOKEN}
+      - BROWSER_API_PORT=8080
+      - BROWSER_STATE_DIR=/data
+      - BROWSER_STATE_TTL=${BROWSER_STATE_TTL:-600}
+    expose:
+      - "8080"
+    ports:
+      # Published for operator curls only (docker logs, /status). The bot
+      # reaches the host over the internal network at zoom-browser:8080, so a
+      # busy host port here does not affect the bot - just curl.
+      - "127.0.0.1:${ZOOM_BROWSER_HOST_PORT:-8080}:8080"
+    volumes:
+      # zoom_web_session.json lives here; see scripts/zoom_web_login.py.
+      - zoom_browser_state:/data
+    networks:
+      - zoom-telebot-network
+    deploy:
+      resources:
+        limits:
+          # Chromium peaks around 500MB-1GB with a Zoom Web meeting open; the
+          # ceiling is set for the loaded case, not the idle one.
+          memory: ${BROWSER_MEMORY_LIMIT:-1g}
+          cpus: '${BROWSER_CPU_LIMIT:-1.0}'
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=4).status==200 else 1)" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # The Kasm + Zoom desktop host. Kept behind a profile so the failed path is
+  # still one flag away: `docker compose --profile kasm up -d`. The desktop
+  # client never completed a join under llvmpipe software rendering, which is
+  # why this is no longer the default.
   zoom-remote:
     build:
       context: .
@@ -74,6 +130,10 @@ services:
       - REMOTE_API_PORT=8080
       - REMOTE_ALLOWED_ZOOM_DOMAINS=.zoom.us
       - QTWEBENGINE_DISABLE_SANDBOX=1
+      # Zoom's single-instance lock lives in XDG_RUNTIME_DIR. custom_startup.sh
+      # also sets it, but the controller needs it from its own env so that a
+      # launcher it spawns inherits the same path.
+      - XDG_RUNTIME_DIR=/tmp/runtime-kasm-user
     expose:
       - "8080"
       - "6901"
@@ -95,6 +155,7 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    profiles: [ "kasm" ]
 
 # Networks
 networks:
@@ -110,6 +171,9 @@ volumes:
   logs:
     driver: local
     name: logs
+  zoom_browser_state:
+    driver: local
+    name: zoom_browser_state
   zoom_remote_profile:
     driver: local
     name: zoom_remote_profile

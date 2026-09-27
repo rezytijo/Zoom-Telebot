@@ -11,6 +11,7 @@ from aiogram.types import Message
 from config import settings
 from bot.handlers import router
 from bot.cloud_recording_handlers import router as cloud_recording_router
+from bot.session_handlers import router as session_router
 from bot.fsm_storage import DatabaseFSMStorage
 from db import init_db, get_user_by_telegram_id, sync_meetings_from_zoom
 from bot.middleware import LoggingMiddleware
@@ -163,6 +164,12 @@ async def main():
     dp = Dispatcher(storage=DatabaseFSMStorage(settings.db_path))
     # Include cloud recording handlers FIRST (before generic handlers)
     dp.include_router(cloud_recording_router)
+
+    # The session import listens for /cancel and bare text while it waits for a
+    # file. bot/handlers.py ends with a catch-all that matches any "/..." message,
+    # so this router has to be registered first or /cancel would be consumed there
+    # and the pending import would be impossible to abandon.
+    dp.include_router(session_router)
 
     dp.include_router(router)
 

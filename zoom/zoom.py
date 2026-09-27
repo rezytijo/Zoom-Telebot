@@ -2,7 +2,7 @@ import time
 import base64
 import asyncio
 import aiohttp
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from config import settings
 import logging
 
@@ -72,46 +72,6 @@ class ZoomClient:
                     self._token_exp = time.time() + int(expires_in)
                     self.logger.info("Obtained new Zoom token, expires in %s seconds", int(expires_in))
                     return access_token
-
-    async def fetch_token_info(self) -> Dict[str, Any]:
-        """Fetch the token endpoint and return the raw response for diagnostics.
-
-        This does not alter the cached token state; it's intended for debugging.
-        Returns a dict containing: status, text, json (if decodable), requested_data
-        """
-        client_id = settings.zoom_client_id
-        client_secret = settings.zoom_client_secret
-        if not client_id or not client_secret:
-            raise RuntimeError("Zoom client credentials missing")
-
-        basic_raw = f"{client_id}:{client_secret}".encode('utf-8')
-        basic_b64 = base64.b64encode(basic_raw).decode('ascii')
-
-        token_url = "https://zoom.us/oauth/token"
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {basic_b64}",
-        }
-
-        if settings.zoom_account_id:
-            data = {"grant_type": "account_credentials", "account_id": str(settings.zoom_account_id)}
-        else:
-            data = {"grant_type": "client_credentials"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(token_url, data=data, headers=headers) as resp:
-                text = await resp.text()
-                try:
-                    j = await resp.json()
-                except Exception:
-                    j = None
-
-                return {
-                    "status": resp.status,
-                    "text": text,
-                    "json": j,
-                    "requested_data": data,
-                }
 
     def is_token_valid(self) -> bool:
         """Return True if cached token exists and not expired (with 30s buffer)."""
@@ -250,11 +210,22 @@ class ZoomClient:
                 self.logger.debug("Received meetings: %s", data)
                 return data
 
-    async def get_short_url(self, meeting: Dict[str, Any]) -> str:
-        # Zoom doesn't provide a 'short url' directly in API; we return join_url
-        return meeting.get("join_url") or ""
-
     async def delete_meeting(self, meeting_id: str) -> bool:
+        """Delete a meeting, idempotently.
+
+        Returns True when the meeting does not exist afterwards - which
+        includes the case where it already did not. DELETE is idempotent by
+        HTTP semantics, and callers here all mean "make sure this meeting is
+        gone", not "prove I was the one who removed it".
+
+        This matters because the local DB keeps rows that Zoom has already
+        dropped: sync_meetings_from_zoom only reconciles the 'active' status,
+        so a row that expired to 'done' and was then deleted on the Zoom side
+        stays listed forever. Asking to delete it returned
+        "Zoom API error 404" and the row never left the meeting list, so
+        /zoom_del could never clean up a stale entry. A 404 is the desired end
+        state, reported as failure.
+        """
         self.logger.info("Deleting meeting meeting_id=%s", meeting_id)
         token = await self.ensure_token()
         url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}"
@@ -263,6 +234,10 @@ class ZoomClient:
             async with session.delete(url, headers=headers) as resp:
                 if resp.status == 204:
                     self.logger.info("Meeting %s deleted successfully", meeting_id)
+                    return True
+                elif resp.status == 404:
+                    # Zoom code 3001: already gone. Success for our purposes.
+                    self.logger.info("Meeting %s does not exist; treating as deleted", meeting_id)
                     return True
                 elif resp.status >= 400:
                     text = await resp.text()
@@ -351,32 +326,6 @@ class ZoomClient:
         return await self.get_meeting(meeting_id)
 
 
-    async def get_meeting_participants(self, meeting_id: str) -> List[Dict[str, Any]]:
-        """Get list of participants in an active meeting.
-        
-        Uses the /live_meetings endpoint which works for live/active meetings.
-        For past meetings analytics, use /metrics/meetings/{meetingId}/participants instead.
-        """
-        self.logger.info("Getting participants for meeting %s", meeting_id)
-        token = await self.ensure_token()
-        # Use /meetings endpoint with live meeting parameter for LIVE participants
-        url = f"{settings.zoom_audience}/v2/meetings/{meeting_id}?type=live"
-        headers = {"Authorization": f"Bearer {token}"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    # For live meetings, participants are in the 'participants' field
-                    participants = data.get('participants', [])
-                    self.logger.info("Retrieved %d participants for meeting %s", len(participants), meeting_id)
-                    return participants
-                else:
-                    text = await resp.text()
-                    self.logger.error("Failed to get participants for meeting %s: %s - %s", meeting_id, resp.status, text)
-                    return []
-
-
     async def mute_all_participants(self, meeting_id: str) -> bool:
         """Mute all participants in an active meeting."""
         self.logger.info("Muting all participants in meeting %s", meeting_id)
@@ -456,32 +405,6 @@ class ZoomClient:
                 else:
                     self.logger.error("Failed to control recording for meeting %s: %s - %s", meeting_id, resp.status, response_text)
                     return False
-
-
-    async def get_live_meeting_details(self, meeting_id: str) -> Optional[Dict[str, Any]]:
-        """Get live meeting details including recording status.
-        
-        Returns meeting info with recording_status field, or None if not found.
-        Uses /live_meetings/{meetingId} endpoint for real-time status.
-        """
-        self.logger.debug("Getting live meeting details for %s", meeting_id)
-        token = await self.ensure_token()
-        url = f"{settings.zoom_audience}/v2/live_meetings/{meeting_id}"
-        headers = {"Authorization": f"Bearer {token}"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    self.logger.debug("Live meeting %s details retrieved", meeting_id)
-                    return data
-                elif resp.status == 404:
-                    self.logger.debug("Live meeting %s not found (may not be live)", meeting_id)
-                    return None
-                else:
-                    text = await resp.text()
-                    self.logger.warning("Failed to get live meeting %s: %s - %s", meeting_id, resp.status, text)
-                    return None
 
 
     async def get_cloud_recording_urls(self, meeting_id: str) -> Optional[Dict[str, Any]]:

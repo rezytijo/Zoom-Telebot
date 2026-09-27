@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS meetings (
 -- ==================================================
 CREATE TABLE IF NOT EXISTS meeting_live_status (
     zoom_meeting_id TEXT PRIMARY KEY,      -- FK to meetings.zoom_meeting_id
-    live_status TEXT DEFAULT 'not_started', -- not_started, started, ended
+    -- not_started, launch_requested, started, ended, failed
+    -- launch_requested = remote host launch issued, awaiting confirmation
+    -- failed = launch could not be confirmed; see last_remote_error
+    live_status TEXT DEFAULT 'not_started',
     recording_status TEXT DEFAULT 'stopped', -- stopped, recording, paused
     recording_started_at TIMESTAMP,        -- First time recording was started
     agent_id INTEGER,                      -- ✨ NEW v1.1: Agent used for this meeting (FK to agents.id)

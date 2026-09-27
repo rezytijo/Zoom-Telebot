@@ -54,17 +54,6 @@ def check_config_file():
     return config_file
 
 
-def get_config_version(config_file: str) -> str:
-    """Get current version of config file"""
-    try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        return config.get('version', '1.0')
-    except Exception as e:
-        logger.error(f"Failed to read config file: {e}")
-        return None
-
-
 def preview_changes(config_file: str):
     """Show preview of what will change"""
     try:

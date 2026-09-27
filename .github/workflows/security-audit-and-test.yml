@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main", "master", "development" ]
   workflow_dispatch:
+  # Nightly, so the Chromium-dependent host self-check runs. It needs a ~1.4GB
+  # image build, which is why it is not on the push path.
+  schedule:
+    - cron: "37 3 * * *"
 
 jobs:
   security-audit:
@@ -47,10 +51,10 @@ jobs:
           pip install -r requirements.txt
           pip list --outdated --format=columns || true
 
-  run-tests:
-    name: Run Python Tests
+  run-selfcheck:
+    name: Run Self-Check Suites
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -64,7 +68,129 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Bot Session Import Self-Check
+        env:
+          TELEGRAM_TOKEN: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+          INITIAL_OWNER_ID: "123456789"
+          INITIAL_OWNER_USERNAME: "owner"
+          ZOOM_ACCOUNT_ID: "test"
+          ZOOM_CLIENT_ID: "test"
+          ZOOM_CLIENT_SECRET: "test"
+          TINYURL_API_KEY: "test"
+        # Fully mocked: no Telegram, no Zoom, no network. The import button and
+        # its whole flow live here. It runs as a plain pytest module because
+        # the file is named test_*.py - under its old
+        # bot_session_import_selfcheck.py name, pytest never collected it and
+        # seventeen assertions only ran when invoked by hand.
+        run: python -m pytest tests/test_bot_session_import.py -v
+
+      - name: Host Confirmation Self-Check
+        run: python tests/host_confirmation_selfcheck.py
+
+      - name: Browser Host Self-Check
+        # Chromium is not present on a plain runner, so one group skips itself
+        # with a printed reason instead of failing. The restart regression test
+        # that only breaks inside the image is covered by chromium-selfcheck
+        # below, which runs the suite against the real image.
+        run: python remote_browser/selfcheck.py
+
+  chromium-selfcheck:
+    name: Host Self-Check With Chromium
+    runs-on: ubuntu-latest
+    # The host image is ~1.4GB of browser binaries; building it on every push
+    # is not worth it. It runs on a schedule and on manual dispatch, which is
+    # enough to catch a Playwright or Chromium regression - those move far
+    # slower than the Python code that changes on every commit.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build host image
+        run: docker build -f remote_browser/Dockerfile -t zoom-browser:ci .
+
+      - name: Run self-check inside the image
+        # The image copies only server.py, so selfcheck.py has to be injected.
+        run: |
+          docker run --rm -v "$PWD/remote_browser:/selfcheck:ro" \
+            --entrypoint python zoom-browser:ci /selfcheck/selfcheck.py
+
+  credential-guard:
+    name: No Live Credentials Committed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Detect Zoom session cookies in tracked files
+        run: |
+          set -euo pipefail
+          # A Cookie Editor export is a *live* login. It once sat in dbg/s.json
+          # untracked-but-not-ignored, one `git add .` away from being pushed.
+          # .gitignore protects new files; this protects the ones already
+          # tracked, which .gitignore cannot reach at all.
+          #
+          # The pattern is the three session-cookie *names*, deliberately NOT
+          # "zoom_web_session": that string is a legitimate filename that shows
+          # up in .gitignore, docker-compose.yml and the docs, and matching it
+          # makes the guard fail on its own configuration. A guard that can
+          # only fail is one nobody will run.
+          PATTERN='_zm_page_auth|_zm_multi_ac|zm_haid'
+          HITS=$(git grep -IlE "$PATTERN" -- . \
+                 ':!*.md' ':!.gitignore' \
+                 ':!.github/workflows/security-audit-and-test.yml' \
+                 ':!remote_browser/selfcheck.py' \
+                 ':!tests/bot_session_import_selfcheck.py' \
+                 || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::Live Zoom session cookies found in tracked files:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "No live Zoom credentials in tracked files."
+
+      - name: Verify credential paths are ignored
+        run: |
+          set -euo pipefail
+          for p in dbg/s.json zoom_web_session.json data/zoom_web_session.json; do
+            if git check-ignore -q "$p"; then
+              echo "ignored: $p"
+            else
+              echo "::error::$p is NOT covered by .gitignore"
+              exit 1
+            fi
+          done
+
+  run-tests:
+    name: Run Python Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # requirements-dev.txt pulls in requirements.txt plus pytest and telethon,
+          # which the integration suites need in order to even be collected.
+          pip install -r requirements-dev.txt
+
+      - name: Verify Test Collection
+        run: python -m pytest tests/ --collect-only -q
 
       - name: Run Pytest
         env:
@@ -75,5 +201,8 @@ jobs:
           ZOOM_CLIENT_ID: "test"
           ZOOM_CLIENT_SECRET: "test"
           TINYURL_API_KEY: "test"
+        # Integration suites self-skip when tests/tg_credentials.json is absent
+        # (it is gitignored, so CI never has it). Collecting first above turns a
+        # module-level import error into a red build instead of a silent pass.
         run: |
           python -m pytest tests/ -v

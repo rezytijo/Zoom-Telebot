@@ -24,9 +24,11 @@ RUN sed -i 's/\r$//' /dockerstartup/custom_startup.remote.sh \
     && mv /dockerstartup/custom_startup.sh /dockerstartup/custom_startup.kasm.sh \
     && mv /dockerstartup/custom_startup.remote.sh /dockerstartup/custom_startup.sh \
     && mkdir -p /etc/opt/chrome/policies/managed \
-    && echo '{"AutoLaunchProtocolsFromOrigins": [{"allowed_origins": ["*"], "protocol": "zoommtg"}, {"allowed_origins": ["*"], "protocol": "zoomus"}]}' > /etc/opt/chrome/policies/managed/zoom_policies.json \
-    && mv /opt/zoom/ZoomWebviewHost /opt/zoom/ZoomWebviewHost.bin \
-    && printf '#!/bin/bash\nexec /opt/zoom/ZoomWebviewHost.bin --no-sandbox "$@"\n' > /opt/zoom/ZoomWebviewHost \
-    && chmod 755 /opt/zoom/ZoomWebviewHost
+    && echo '{"AutoLaunchProtocolsFromOrigins": [{"allowed_origins": ["*"], "protocol": "zoommtg"}, {"allowed_origins": ["*"], "protocol": "zoomus"}]}' > /etc/opt/chrome/policies/managed/zoom_policies.json
+
+# NOTE: /opt/zoom/ZoomWebviewHost is left as the ELF binary the image ships.
+# Wrapping it in a bash script to inject --no-sandbox made the client log
+# "ZoomWebviewHost finally lanuch state is false" and leave the join dialog
+# unpainted. The container runs unprivileged, so the real binary is correct.
 
 USER 1000

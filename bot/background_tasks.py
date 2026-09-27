@@ -4,12 +4,26 @@ Handles periodic updates like cloud recording fetching, expired meeting cleanup,
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from zoom import zoom_client
-from db import list_meetings, update_meeting_cloud_recording_data, get_meeting_cloud_recording_data, update_meeting_status
+from db import list_meetings, update_meeting_cloud_recording_data, get_meeting_cloud_recording_data, update_meeting_status, list_meetings_pending_launch, mark_remote_launch_failed, update_meeting_live_status
+from config import settings
 
 logger = logging.getLogger(__name__)
+
+def _as_utc_naive(dt) -> datetime:
+    """Normalise a DB timestamp to a naive UTC datetime.
+
+    SQLite CURRENT_TIMESTAMP is UTC, but the host clock is local (Asia/Jakarta by
+    default). Subtracting a naive local `datetime.now()` from a naive UTC value
+    inflates the age by the UTC offset - 7 hours here - so every pending launch
+    looked instantly timed out. Normalising both sides to UTC is what makes the
+    comparison mean the same thing regardless of the host timezone.
+    """
+    if dt.tzinfo is None:
+        return dt  # already naive UTC from SQLite
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 class BackgroundTaskManager:
@@ -32,6 +46,7 @@ class BackgroundTaskManager:
         self.tasks = [
             asyncio.create_task(self._periodic_cloud_recording_sync()),
             asyncio.create_task(self._periodic_cleanup()),
+            asyncio.create_task(self._host_confirmation_watch()),
         ]
         
         logger.info("Background tasks started: %d tasks", len(self.tasks))
@@ -187,6 +202,75 @@ class BackgroundTaskManager:
                 logger.exception("Error in cleanup task: %s", e)
                 # Continue running despite errors
 
+    async def _host_confirmation_watch(self):
+        """Advance launch_requested -> started without depending on the Zoom webhook.
+
+        The remote controller reports "opened" the moment xdg-open spawns, which
+        proves nothing about whether the host actually joined. Until a Zoom
+        webhook is configured the bot has no other way to learn that, so this
+        polls the Zoom API directly and stamps the transition itself.
+
+        Without this, launch_requested meetings sit forever indistinguishable
+        from never-launched ones: get_meeting_live_status() returns the raw
+        column, and the operator's "Cek Status" button never changes.
+        """
+        logger.info("Host confirmation watcher started")
+        try:
+            while self.is_running:
+                try:
+                    rows = await list_meetings_pending_launch()
+                    for row in rows:
+                        if not self.is_running:
+                            break
+                        await self._confirm_one(row)
+                except asyncio.CancelledError:
+                    logger.info("Host confirmation watcher cancelled")
+                    break
+                except Exception as e:
+                    logger.exception("Error in host confirmation loop: %s", e)
+
+                # 10s keeps the button responsive without hammering the Zoom API.
+                await asyncio.sleep(10)
+        finally:
+            logger.info("Host confirmation watcher stopped")
+
+    async def _confirm_one(self, row: Dict):
+        """Poll one pending launch until it starts, fails, or times out."""
+        meeting_id = row["zoom_meeting_id"]
+        try:
+            meeting_data = await zoom_client.get_meeting(meeting_id)
+        except Exception as e:
+            # A transient Zoom API error must not abandon the launch. The meeting
+            # stays launch_requested and is retried on the next tick; the timeout
+            # in the DB is what eventually gives up on it.
+            logger.debug("Host confirm poll failed for %s: %s", meeting_id, type(e).__name__)
+            return
+
+        if not meeting_data:
+            await mark_remote_launch_failed(meeting_id, "meeting_not_found")
+            return
+
+        status = meeting_data.get("status", "unknown")
+        if status == "started":
+            await update_meeting_live_status(meeting_id, "started")
+            logger.info("Remote host joined meeting %s (Zoom reports started)", meeting_id)
+            return
+
+        if status in ("ended", "deleted"):
+            await mark_remote_launch_failed(meeting_id, f"zoom_status_{status}")
+            return
+
+        # Still waiting: check whether the request has outlived its budget.
+        requested_at = row.get("launch_requested_at")
+        if not requested_at:
+            return
+        try:
+            age = (datetime.now(timezone.utc).replace(tzinfo=None)
+                   - _as_utc_naive(requested_at)).total_seconds()
+        except (AttributeError, TypeError, ValueError):
+            return
+        if age > settings.zoom_remote_host_confirm_timeout:
+            await mark_remote_launch_failed(meeting_id, "host_confirm_timeout")
 
 # Global instance
 bg_task_manager = BackgroundTaskManager()

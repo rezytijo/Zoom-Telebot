@@ -62,8 +62,21 @@ def backup_menu_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text="💾 Backup Database", callback_data="backup_db")],
         [InlineKeyboardButton(text="📦 Restore Database", callback_data="restore_db")],
-        [InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")],
     ]
+    # Only meaningful with a remote host, and only for admin/owner - same gate as
+    # the rest of this menu.
+    if _is_remote_control_enabled():
+        keyboard.append([
+            InlineKeyboardButton(text="🔐 Import Sesi Zoom", callback_data="zoom_import_session")
+        ])
+        # A test, not another import. The operator's real question when a
+        # meeting fails to launch is "are my cookies still alive?", and the
+        # honest answer needs a live check against Zoom - which can take up to
+        # 30s because the host has to start Chromium and load zoom.us.
+        keyboard.append([
+            InlineKeyboardButton(text="🩺 Uji Sesi Zoom", callback_data="zoom_test_session")
+        ])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 

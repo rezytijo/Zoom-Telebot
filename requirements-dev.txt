@@ -1,7 +1,17 @@
 -r requirements.txt
 
+# Testing & audit tooling
 pytest==9.1.1
 pytest-asyncio==1.4.0
 watchdog==6.0.0
 pip-audit==2.10.1
-telethon>=1.35.0
+
+# Telethon client used by the integration suites only
+telethon==1.45.0
+
+# Operator tooling for the headless Zoom Web host (remote_browser/).
+# Pinned to the same version as the mcr.microsoft.com/playwright/python image
+# tag in remote_browser/Dockerfile, since the image ships its own matching
+# browser build. scripts/zoom_web_login.py runs this on the operator's PC;
+# the bot container never imports playwright.
+playwright==1.63.0

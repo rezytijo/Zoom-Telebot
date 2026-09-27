@@ -4,9 +4,9 @@ from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
 
-from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, set_remote_launch_state, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
+from db import add_pending_user, list_pending_users, list_all_users, update_user_status, get_user_by_telegram_id, ban_toggle_user, delete_user, add_meeting, update_meeting_short_url, update_meeting_short_url_by_join_url, list_meetings, list_meetings_with_shortlinks, sync_meetings_from_zoom, update_expired_meetings, update_meeting_status, update_meeting_details, update_meeting_recording_status, get_meeting_recording_status, update_meeting_live_status, get_meeting_live_status, set_remote_launch_state, get_remote_launch_state, sync_meeting_live_status_from_zoom, backup_database, backup_shorteners, create_backup_zip, restore_database, restore_shorteners, extract_backup_zip, search_users, update_command_status, check_timeout_commands, get_meeting_agent_id, get_meeting_cloud_recording_data, update_meeting_cloud_recording_data
 from bot.keyboards import pending_user_buttons, pending_user_owner_buttons, user_action_buttons, manage_users_buttons, role_selection_buttons, status_selection_buttons, list_meetings_buttons, shortener_provider_buttons, shortener_provider_selection_buttons, shortener_custom_choice_buttons, back_to_main_buttons, back_to_main_new_buttons, main_menu_keyboard, meetings_menu_keyboard, users_menu_keyboard, backup_menu_keyboard, info_menu_keyboard, shortener_menu_keyboard
 from config import settings
 from bot.auth import is_allowed_to_create, is_owner_or_admin, is_registered_user
@@ -20,7 +20,6 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 import uuid
 from shortener import make_short
-from bot.utils.loading import LoadingContext
 import shlex
 import os
 import shutil
@@ -306,6 +305,41 @@ async def cmd_whoami(msg: Message):
 # Zoom Meeting Management - FSM States
 # ==========================================
 
+def _fmt_ts(value) -> str:
+    """Format a DB timestamp in the bot timezone.
+
+    SQLite CURRENT_TIMESTAMP is UTC while datetime.now() is local, so naive
+    values are read as UTC. Accepts datetime or string because the two callers
+    disagree on which one aiosqlite hands back.
+    """
+    if value is None:
+        return "-"
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(ZoneInfo(settings.timezone)).strftime("%H:%M:%S")
+
+def _render_launch_detail(state: Dict[str, Any], requested_by_id: Optional[int] = None) -> str:
+    """Render the remote-launch row, or '' when there is nothing to show.
+
+    live_status alone collapses launch_requested / failed / started into one
+    'remote' line, which is exactly the distinction an admin needs while a
+    launch is pending. last_remote_error is escaped: it carries raw exception
+    text from the remote host, and this string is sent as parse_mode=HTML.
+    """
+    status = state.get("live_status")
+    if status == "launch_requested":
+        asked = _fmt_ts(state.get("launch_requested_at"))
+        who = f" oleh <code>{requested_by_id}</code>" if requested_by_id else ""
+        return f"\n\n🟡 <b>Menunggu host masuk</b>{who} · <code>{asked}</code> WIB"
+    if status == "failed":
+        err = html.escape(str(state.get("last_remote_error") or "tidak diketahui"))
+        return f"\n\n❌ <b>Remote launch gagal</b>: <code>{err}</code>"
+    if status == "started":
+        return f"\n\n🟢 <b>Host masuk</b> · <code>{_fmt_ts(state.get('actual_started_at'))}</code> WIB"
+    return ""
+
 class ZoomManageStates(StatesGroup):
     choosing = State()
     confirm_stop = State()
@@ -375,6 +409,11 @@ async def cb_control_zoom(c: CallbackQuery):
             f"🔗 {join_url}\n\n"
             "Pilih aksi kontrol:"
         )
+        # A pending launch looks identical to a plain "not started" in the
+        # Remote line above, so the launch states get their own detail row.
+        launch = await get_remote_launch_state(meeting_id)
+        if launch:
+            text += _render_launch_detail(launch, requested_by_id=c.from_user.id)
 
         # current_recording_status from DB
 
@@ -477,10 +516,18 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
         
         start_url = meeting_details.get('start_url', '')
         topic = meeting_details.get('topic', 'Meeting')
+        # start_url carries the zak host key (/s/<id>?zak=...) and no pwd, so the
+        # passcode has to travel separately or the browser stops at the prompt.
+        passcode = meeting_details.get('password', '')
+        # join_url is the public /j/<id>?pwd= link, sent as a fallback for
+        # accounts where the zak scope is not granted.
+        join_url = meeting_details.get('join_url', '')
 
-        if start_url:
+        if start_url or join_url:
             request_id = str(uuid.uuid4())
-            await remote_zoom_client.launch_meeting(meeting_id, start_url, c.from_user.id)
+            await remote_zoom_client.launch_meeting(
+                meeting_id, start_url, c.from_user.id, passcode, join_url=join_url
+            )
             await set_remote_launch_state(meeting_id, request_id, c.from_user.id)
             text = (
                 "🚀 <b>Zoom sedang dibuka pada Remote Host</b>\n\n"
@@ -497,7 +544,7 @@ async def cb_start_zoom_meeting(c: CallbackQuery):
             ])
             kb = InlineKeyboardMarkup(inline_keyboard=rows)
         else:
-            text = "❌ Gagal memulai meeting. Start URL tidak tersedia."
+            text = "❌ Gagal memulai meeting. Zoom tidak mengembalikan start URL maupun join URL."
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🎥 Kembali ke Kontrol", callback_data=f"control_zoom:{meeting_id}")],
                 [InlineKeyboardButton(text="📋 Daftar Meeting", callback_data="list_meetings")]
@@ -3823,6 +3870,120 @@ async def cb_menu_users(c: CallbackQuery):
 
 
 
+async def _session_status_line() -> str:
+    """One line describing the host's saved Zoom session.
+
+    Without this, "is my session saved?" has no answer anywhere in the bot. The
+    only feedback is the import confirmation, which scrolls away and says
+    nothing about the *previous* import. The host already exposes
+    session_ready, and it is a live check rather than a file-exists test - a
+    file can sit on disk while Zoom has expired it, which is the exact failure
+    the import warning exists to explain.
+
+    Never raises. A status line is decoration; the host being unreachable must
+    not stop the panel from opening.
+    """
+    try:
+        snapshot = await remote_zoom_client.status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read host status for the session line: %s", exc)
+        return "🔌 Status host: <i>tidak bisa dihubungi</i>"
+
+    ready = bool(snapshot.get("session_ready"))
+    return (
+        "✅ Sesi Zoom tersimpan &amp; valid"
+        if ready
+        else "❌ Belum ada sesi Zoom tersimpan"
+    )
+
+@router.callback_query(lambda c: c.data == 'zoom_test_session')
+async def cb_test_session(c: CallbackQuery):
+    """Verify the stored session against Zoom, not just against the disk.
+
+    /status can already say whether a session file exists. That is the wrong
+    question. The failure this button exists for is a file that is present and
+    stale: Zoom rejected the cookies at launch and the operator has no way to
+    tell that apart from "never uploaded one" without re-uploading blind.
+
+    The check starts Chromium and loads zoom.us, so it can take up to 30
+    seconds. Answer the callback and post a separate status message first, so
+    the button stops spinning immediately and the result lands in a fresh
+    message instead of fighting the panel for the same bubble.
+    """
+    if c.from_user is None:
+        await c.answer("Informasi pengguna tidak tersedia")
+        return
+
+    user = await get_user_by_telegram_id(c.from_user.id)
+    if not is_owner_or_admin(user):
+        await c.answer("Menu ini hanya untuk Admin/Owner.")
+        return
+
+    await c.answer("Memeriksa sesi ke Zoom...")
+    status = await c.message.answer("🩺 <b>Menguji sesi Zoom...</b>\n\nMeminta host membuka zoom.us. Bisa sampai 30 detik.")
+
+    try:
+        result = await remote_zoom_client.check_session()
+    except RemoteZoomError as exc:
+        await _reply_with(status, f"❌ <b>Pemeriksaan gagal</b>\n\n{exc}", _session_action_keyboard())
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Session test failed")
+        await _reply_with(status, f"❌ <b>Pemeriksaan gagal</b>\n\n{type(exc).__name__}: {exc}", _session_action_keyboard())
+        return
+
+    if result.get("session_ready"):
+        await _reply_with(
+            status,
+            "✅ <b>Sesi Zoom masih valid</b>\n\n"
+            "Host berhasil memuat zoom.us tanpa diarahkan ke halaman sign-in.\n"
+            "Tidak perlu upload ulang.",
+            _session_action_keyboard(),
+        )
+        return
+
+    # The host separates "your cookies are stale" from "the check itself
+    # broke". Collapsing them would send the user off to re-export cookies that
+    # were never the problem, so pass its wording through.
+    detail = result.get("detail") or "tidak tertaut ke Zoom"
+    if not result.get("stored"):
+        await _reply_with(
+            status,
+            "❌ <b>Belum ada sesi Zoom</b>\n\n"
+            f"Host melaporkan: {detail}\n\n"
+            "Kirim ulang file Cookie Editor lewat tombol Import Sesi Zoom.",
+            _session_action_keyboard(),
+        )
+        return
+
+    await _reply_with(
+        status,
+        f"⚠️ <b>Sesi Zoom kedaluwarsa</b>\n\nHost melaporkan: {detail}\n\n"
+        "Upload ulang sesi lewat tombol Import Sesi Zoom.",
+        _session_action_keyboard(),
+    )
+
+def _session_action_keyboard() -> InlineKeyboardMarkup:
+    """Offer the fix only when there is a fix. A dead-end message is worse
+    than no message - the user has to go find the button themselves."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔐 Import Sesi Zoom", callback_data="zoom_import_session")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu Utama", callback_data="back_to_main")],
+    ])
+
+async def _reply_with(status: Message, text: str, keyboard: InlineKeyboardMarkup) -> None:
+    """Edit the placeholder, or send a new message if Telegram refuses the edit.
+
+    Duplicated from session_handlers._finish rather than imported, because that
+    one hardcodes its own back button and this flow needs a different one.
+    Importing it would silently drop the Import button from the failure
+    message - the exact message the user needs it in.
+    """
+    try:
+        await status.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+    except TelegramBadRequest:
+        await status.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
 @router.callback_query(lambda c: c.data == 'menu_backup')
 async def cb_menu_backup(c: CallbackQuery):
     """Show backup and restore submenu (admin/owner only)."""
@@ -3835,7 +3996,8 @@ async def cb_menu_backup(c: CallbackQuery):
         await c.answer("Menu ini hanya untuk Admin/Owner.")
         return
 
-    text = "💾 <b>Backup & Restore</b>\n\nKelola backup database:"
+    text = "💾 <b>Backup &amp; Restore</b>\n\nKelola backup database:"
+    text += "\n\n" + await _session_status_line()
     await _safe_edit_or_fallback(c, text, reply_markup=backup_menu_keyboard())
     await c.answer()
 

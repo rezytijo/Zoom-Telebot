@@ -5,6 +5,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Scratch scripts that read VS Code's own state DB and print whatever it holds.
+# The output is MCP server configs, which carry bearer tokens for whatever the
+# operator has connected. Not a project file; it must never leave this machine.
+.mcp-probe/
+
 # C extensions
 *.so
 
@@ -112,6 +117,20 @@ ENV/
 env.bak/
 venv.bak/
 
+# Zoom Web host session (remote_browser/): a live Zoom login cookie, so it
+# must never be committed the same way .env must not be.
+zoom_web_session.json
+*.storage_state.json
+
+# Scratch dir used while debugging the session import. A Cookie Editor export
+# dropped here is a *live* credential (_zm_page_auth / cred / zm_haid), not a
+# fixture, so the whole dir is ignored rather than just known filenames.
+dbg/
+# Catch-all for stray session exports anywhere in the tree. Deliberately
+# narrower than *.json, which the repo needs for real assets.
+*cookies*.json
+*session_export*.json
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -153,8 +172,13 @@ backup_*/
 # Development files
 dev_run.py
 run_dev.py
-test_*.py
+# Ignore ad-hoc test scripts at repo root, but keep the real suite in tests/.
+# A bare "test_*.py" also matches tests/*.py and a "!" entry cannot re-include
+# a file whose parent directory was excluded, so both patterns are needed.
+/test_*.py
 !tests/
+!tests/test_*.py
+!tests/conftest.py
 tests/*.json
 tests/*.session
 .pytest_cache/
@@ -251,4 +275,10 @@ graphify-output/**
 run_graphify.py
 .pytest-tmp-codex/test_remote_state_preserves_recurrent
 .aionrs/
-bot.lock
+bot.lock
+
+# Test run artifacts (regenerated on every pytest run; leak absolute local paths)
+pytest_output*.txt
+logs/
+latest_logs/
+archived_logs/

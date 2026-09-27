@@ -1,8 +1,8 @@
 # Zoom-Telebot SOC - AI Context Reference
 
 **Created:** December 5, 2025  
-**Last Updated:** July 17, 2026 17:25 WIB  
-**Version:** v2026.07.17
+**Last Updated:** September 27, 2026 19:05 WIB
+**Version:** v2026.09.27g
 
 **Docker Images:**
 - `rezytijo/zoom-telebot:latest`
@@ -12,6 +12,113 @@
   - Pushed to Docker Hub on January 8, 2026
 
 **Latest Changes:**
+- 2026-09-27 09:05 WIB — **Import Sesi Zoom dari Telegram, `signed_in: true` terbukti (v2026.09.27b)** — Permintaan user: kalau sesi Zoom belum ada/expired, user harus bisa mengirim JSON hasil Cookie Editor langsung ke bot, tanpa `docker cp` manual. **Blocker `zoom_web_session.json` yang tersisa di laporan v2026.09.27a sekarang CLEARED — host terbukti benar-benar bisa autentikasi ke Zoom.**
+  1. **Keputusan arsitektur: konversi ada di host, bukan di bot.** Host yang memiliki `SESSION_FILE`; satu implementasi, di tempat yang benar. Bot hanya auth, batas ukuran, dan akurasi error yang jujur.
+  2. **Body JSON mentah, bukan multipart** — Telegram memberi bot `file_id`, bot meneruskan byte apa adanya, jadi amplop multipart cuma encoding kedua dari hal yang sama. Ini dipaksa kegagalan nyata: `request.multipart()` meng-assert `multipart/*`, sedangkan yang terkirim `application/json`.
+  3. **`remote_browser/server.py`** — `POST /zoom/session` + `cookies_to_storage_state()` ( terima array mentah, `{"cookies":[...]}`, atau storage_state asli; hanya domain `.zoom.us`/`zoom.us`, jadi suffix `.zoom.us.evil.com` ikut terbuang; `expirationDate` → `expires`) + `save_session_file()` (tulis atomik: tmp + `os.fsync` + `chmod 0o600` + `os.replace`) + `SessionImportError`.
+  4. **Sentinel `-1` itu load-bearing, bukan detail.** Cookie sesi Zoom (`_zm_page_auth`, `cred`, `zm_haid`, `_zm_ssid`) tidak punya `expirationDate`, dan Playwright membaca `expires` yang **hilang** sebagai *sudah expired*. Tanpa sentinel, sesi asli justru dianggap expired — persis kebalikan dari yang diinginkan. Jangan "rapikan" ini jadi float biasa.
+  5. **Pemeriksaan penanda sesi**: export tanpa salah satu dari `_zm_page_auth`/`_zm_multi_ac`/`zm_haid`/`cred` **ditolak**. Kalau tidak, sesi yang masih jalan bisa tertimpa cookie pengunjung anonim — kegagalan diam-diam yang jauh lebih buruk daripada penolakan.
+  6. **409 saat ada meeting hidup** — memuat ulang konteks akan mematikan browser yang sedang dipakai meeting itu. Batas desain, bukan bug.
+  7. **Kontrak kejujuran hasil**: tulis sukses tapi verifikasi Chromium gagal → `200 {imported: true, signed_in: false, reload_error}`, **bukan 500**. 500 akan memberi tahu operator file upload-nya hilang padahal sudah ada di disk. Ini bug yang nyaris terpasang sebelum ketahuan.
+  8. **`bot/session_handlers.py` (baru)** — `/backup` → **🔐 Import Sesi Zoom** → kirim file. Router dipasang **sebelum** router utama karena `bot/handlers.py` diakhiri catch-all `/...`; kalau tidak, `/cancel` tertangkap di sana dan import tidak bisa dibatalkan. `is_owner_or_admin` dicek **di titik pakai**, bukan hanya saat tombol ditekan.
+  9. **Bug laten yang ketemu saat menulis** — `zoom/remote.py` `_request()` sudah `headers=self._headers(), **kwargs`; pemanggil yang butuh `Content-Type` akan kena `TypeError: multiple values for keyword argument 'headers'`. Sekarang header digabung. Bonus: pesan error teks polos dari host kini diteruskan apa adanya, tanpa itu penolakan cookie jadi "HTTP 400" tanpa alasan.
+  10. **BUG `restart()` meninggalkan context mati** — `restart()` menutup context tapi **tidak menolakkan handlenya**, jadi `_ensure_started()` melihat `self._context` truthy, melewati launch, dan `new_page()` berikutnya mati `TargetClosedError`. **Import pertama sempat benar hanya karena lazy Chromium belum punya browser yang hidup — jadi bug baru muncul di import kedua, justru pada alur utama fitur ini.** Diubah ke `await self._release()`. Pelajaran: **lazy start menutupi bug restart**, dan fitur yang justru dipakai berulang (import ulang) adalah yang memicunya.
+  11. **BUG laporan yang tidak bisa ditindaklanjuti** — jalur `except` menyimpan alasan ke `detail` tapi tidak pernah ke `reload_error`, jadi jawaban host `{"signed_in": false, "reload_error": ""}`. Ditambah `check_session() -> (bool, alasan)`. **Aturan: `signed_in: false` tanpa alasan = laporan yang tidak bisa ditindaklanjuti; user tidak bisa bedakan cookie ditolak vs host rusak.**
+  12. **Dua test lama bergantung pada asumsi mesin penulis** — `test_browser_stays_off_until_needed` memakai `"expected no session file on a dev box"`, padahal **di dalam container host file itu ADA**; dan `test_session_import_endpoint` meng-assert `signed_in is False` yang benar di dev tapi salah di image. Pelajarannya lebih besar dari bugnya: **test yang hanya hijau di satu lingkungan tidak membuktikan apa-apa di lingkungan lain** — dan karena itu self-check sekarang dijalankan di container, bukan hanya di PC.
+  **Bukti nyata:** export berformat asli (18 cookie, 4 di antaranya session tanpa `expirationDate`) → `{"imported":true,"cookies":18,"signed_in":true,"reload_error":""}`, dan **import kedua langsung sesudahnya juga `signed_in: true`** (persis kasus yang tadinya `TargetClosedError`). Log: `Session imported (18 cookies)` → `Chromium 153.0.8010.12 started` → `Session import verified against Zoom: signed_in=True`. Berkas di disk `0600`, domain tanpa titik depan, 5 cookie sesi pada `-1`. Selfcheck **14 kelompok**, hijau di dev (1 di-skip) dan di container.
+  **Cara menjalankan test restart (butuh Chromium):** `docker cp remote_browser\selfcheck.py zoom-browser:/tmp/ && docker compose exec zoom-browser cp /app/server.py /tmp/ && docker compose exec -w /tmp zoom-browser python selfcheck.py` — image hanya menyalin `server.py`, jadi `selfcheck.py` harus di-inject.
+  **Catatan kecil yang tercatat:** Playwright meninggalkan `/tmp/playwright-artifacts-*` per launch (716K setelah beberapa launch) — belum masalah, tapi tumbuh per meeting. Tambahkan cleanup periodic / `tmpfs` kalau image dipakai jangka panjang.
+
+- 2026-09-27 11:20 WIB — **Tombol import tidak terlihat: image belum di-rebuild + dokumentasi salah arah (v2026.09.27c)**
+  1. **Gejala:** user melaporkan tidak ada tombol import sama sekali, padahal fiturnya lengkap dan selfcheck hijau. Dua sebab, keduanya nyata: (a) **image `zoom-telebot` belum pernah di-rebuild** — `grep -c zoom_import_session /app/bot/keyboards.py` = `0` di dalam container, padahal ada di workspace; (b) **dokumentasi salah** — `Readme.md` menulis `/backup` seolah membuka panel tombol, padahal `cmd_backup` di `bot/handlers.py` **langsung membuat file zip**. Panel tombolnya ada di `menu_backup` (💾 Backup & Restore di menu utama). Dua tempat di Readme diperbaiki. **Pelajaran: kode yang benar di workspace tidak berarti kode yang jalan** — dan dokumentasi yang salah arah lebih buruk daripada tidak ada dokumentasi, karena user mencari tombol di tempat yang memang tidak punya tombol.
+  2. **`tests/test_bot_session_import.py` (baru)** — 11 kelompok assertion, **tanpa** token Telegram, tanpa Zoom, tanpa jaringan. `Bot`/`File`/`Message`/`FSMContext` semua di-fake. Cakupannya yang benar-benar bisa rusak: tombol hanya saat `zoom_control_mode == "remote"`; router sesi terdaftar **sebelum** catch-all (dibaca dari urutan di `bot/main.py`); non-admin ditolak; mode kontrol salah ditolak; file >4 MB ditolak **sebelum** diunduh; `/cancel` menghapus state; teks liar tidak memicu import; nilai cookie tidak pernah di-source.
+  3. **Tiga jebakan harness, semuanya di perakh bukan di produksi.** (a) `bot/keyboards.py` meng-`import settings` **langsung dari `config`**, jadi menambal `session_handlers.settings` tidak pernah menjangkau `settings.zoom_control_mode` yang dibaca keyboard — harus menambal `keyboards.settings`. (b) `Bot.answer()` mengembalikan objek `Message` yang lalu diedit `_finish()`, sedangkan fake-nya mengembalikan `None` → `AttributeError: 'NoneType' object has no attribute 'edit_text'`. (c) `restore()` awalnya menulis 3-tuple ke 4 atribut, sehingga test saling menimpa nilai pemulihannya sendiri.
+  4. **Jebakan paling berbahaya: fake `async` untuk fungsi yang sinkron.** `is_owner_or_admin` di `bot/auth.py` adalah `def` biasa dan handler memanggilnya **tanpa** `await`. Fake-nya `async def`, jadi mengembalikan coroutine yang **selalu truthy** — `if not <coroutine>` bernilai `False`, sehingga **seluruh pemeriksaan izin dalam 11 kelompok assertion itu tidak menguji apa pun**. Gejalanya `test_non_admin_cannot_import` gagal dengan `payloads: [b'[]']` dan `answers: []`: byte milik non-admin diteruskan ke host. Guard produksi **benar dan tidak diubah**. **Aturan: saat test gagal, periksa dulu apa yang dipalsukan harness sebelum menyalahkan kode produksi** — terutama untuk permission/auth, karena fake yang terlalu longgar membuat seluruh kelas test diam-diam tidak bergigi.
+  5. **Status akhir:** `tests/test_bot_session_import.py` **11/11 exit 0**; `remote_browser/selfcheck.py` exit 0; `tests/host_confirmation_selfcheck.py` exit 0. Perbaikan harness **tidak menyentuh satu baris pun kode produksi** — itu sebabnya dua suite produksi tetap hijau, dan itu juga bedanya dengan menutupi regresi.
+  6. **KREDENSIAL BOCOR — `dbg/s.json`** — berisi export Cookie Editor **nyata** (`_zm_page_auth`, `cred` untuk `us06web.zoom.us`, `zm_haid`, `_zm_multi_ac`). Tidak pernah terlacak git, tapi juga **tidak ter-ignore**, jadi bisa ikut ter-*stage* tanpa disadari. Berkas dihapus, `dbg/` masuk `.gitignore`, ditambah `*cookies*.json` dan `*session_export*.json`. Aturan sengaja lebih sempit dari `*.json` karena repo butuh JSON asli (`data/shorteners.json`) — sudah diverifikasi nol file terlacak ikut kena. **Pelajaran: cookie export tidak otomatis aman hanya karena tidak di-commit. Direktori scratch untuk debugging wajib di-ignore dari awal, karena isinya kredensial, bukan fixture.** Kalau cookie berasal dari akun nyata, nilai yang sudah pernah ada di working tree tetap harus dianggap bocor dan di-logout.
+  7. **CI sekarang menjalankan ketiga suite sendiri** (`.github/workflows/security-audit-and-test.yml`, job `run-selfcheck`). Sebelumnya semuanya manual di PC — **suite green yang tidak dipicu siapa pun akan tetap hijau selamanya**, dan `restart()` yang punya regression test justru lolos ke produksi karena tidak ada yang menjalankannya.
+  8. **Job `chromium-selfcheck`** (nightly `37 3 * * *` + manual): membangun image host, menjalankan self-check **di dalamnya**. Test `restart()` hanya bisa gagal di dalam image; image-nya ~1,4 GB, jadi tidak ditaruh di jalur push. Di runner biasa grup Chromium **mencetak alasan lalu skip**, bukan gagal diam-diam.
+  9. **Job `credential-guard`** — dua lapis: (a) scan **file terlacak** untuk `_zm_page_auth` / `_zm_multi_ac` / `zm_haid`; (b) verifikasi `dbg/s.json`, `zoom_web_session.json`, `data/zoom_web_session.json` benar-benar ter-ignore. Pola **sengaja tidak** memakai `zoom_web_session` — string itu nama file sah yang muncul di `.gitignore` + `docker-compose.yml` + docs, jadi mencocokkannya membuat guard gagal pada konfigurasinya sendiri. **Guard yang hanya bisa gagal tidak akan pernah dijalankan.** Kedua arah sudah dibuktikan lokal: repo bersih → lulus, dummy `dbg/leak_probe.json` berisi `_zm_page_auth` → **tertangkap**.
+  10. **`Build-&-Deploy.yml` dan `Build-Dev.yml` tidak disentuh** — `git diff` kosong untuk keduanya. Hanya satu workflow yang diubah, karena itu yang perlu.
+  11. **Graphify diperbarui**: `graphify . --update --code-only` lalu `graphify cluster-only . --code-only` → 1112 node, 2559 edge, 60 komunitas, 52 file. Modul baru masuk semua. **`--code-only` wajib dipakai di mesin ini** — tidak ada LLM API key di `.env` maupun environment, dan tanpa flag itu pipeline gagal karena 11 file markdown butuh semantic extraction. Verifikasi nol kebocoran: `aw1_c_` dan `42ED75554C` = 0 hit di graph.json / GRAPH_REPORT.md / graph.html.
+  12. **Semua YAML workflow divalidasi lokal** dengan `yaml.safe_load` sebelum dianggap benar — cukup dump struktur job/step-nya. Dua workflow lain juga ikut ter-parse sehingga tidak ada perubahan tak sengaja.
+  13. **Todos harus diupdate di setiap perpindahan status, bukan hanya di akhir.** User complain ini dengan tepat: setelah compaction summarizer, daftar yang tersimpan tertinggal dan 8 dari 12 item sebenarnya sudah selesai tapi masih ditandai belum. **Daftar yang basi lebih berbahaya daripada tidak ada daftar**, karena membuat orang memulai pekerjaan yang sudah beres.
+
+- 2026-09-27 17:10 WIB — **Verifikasi tombol import dengan pytest (v2026.09.27d)**
+  1. **AKAR MASALAH YANG SEBENARNYA: 11 assertion itu tidak pernah dijalankan pytest.** Filenya bernama `tests/bot_session_import_selfcheck.py`; `pytest tests/` hanya mengumpulkan `test_*.py`. Jadi suite hijau setiap kali dijalankan manual, tapi **tidak pernah terpicu CI maupun `pytest tests/`**. Ini lebih buruk dari ketiadaan test: ada coverage, tapi tidak ada yang memakai. Di-*rename* jadi `tests/test_bot_session_import.py` — rename saja, bukan bikin wrapper, jadi tidak ada dua sumber kebenaran.
+  2. **`pytest.ini` baru** dengan `asyncio_mode = auto`. Alasannya spesifik: di mode `strict`, `async def test_` tanpa `@pytest.mark.asyncio` **di-skip, bukan gagal** — jadi suite bisa hijau tanpa menguji apa pun, pola yang persis sama dengan buta di poin 1. **Diverifikasi dulu** bahwa ketiga test async lama sudah punya marker eksplisit (1 marker per file), jadi `auto` tidak mengubah perilaku mereka, hanya mengaktifkan 10 test baru tanpa marker. `asyncio_default_fixture_loop_scope = function` ikut diset.
+  3. **Enam test tombol baru** — ini yang tanyakan user, dan memang belum ada satu pun test yang menyentuh symptoms yang dia lihat. `test_backup_panel_renders_the_import_button` mengecek `callback_data` **persis**, bukan cuma "ada tombol": typo di situ merender tombol yang terlihat benar tapi tidak sampai ke handler. `test_import_button_is_reachable_from_the_main_menu` menguji jalur klik sungguhan (menu → Backup & Restore → import) karena tombol di panel yang tak bisa dibuka bukan fitur. `test_import_button_unreachable_for_a_regular_user` menguji gerbang di menu utama. `test_button_callback_has_a_handler` menangkap diam-diam yang sebenarnya: `callback_data` tanpa handler di-drop senyap aiogram — tombol muncul, tap tidak melakukan apa-apa, nol baris log. Dua terakhir menguji tap itu sendiri: admin benar-benar meng-*arm* state dan melihat langkah export, non-admin tidak pernah bisa meng-*arm* milik orang lain.
+  4. **Regression test `restart()` terbukti masih bergigi** — `restart()` sengaja dibalik ke `context.close()` tanpa `_release()`, self-check keluar `EXIT=1` dengan `AttributeError: 'NoneType' object has no attribute 'close'`, lalu dikembalikan → `EXIT=0`. **Test yang tidak pernah terlihat gagal bukan bukti apa pun.**
+  5. **Tiga sisa kegagalan `pytest tests/` BUKAN regresi** — sudah dibuktikan, bukan diasumsikan. `test_remote_host_join` menunjuk **Kasm `zoom-remote` yang sudah dinyatakan gagal** dan digantikan `zoom-browser`, jadi endpoint-nya memang tidak ada. `test_bot_integration` + `test_meeting_details_controls` gagal karena `zoom-telebot-soc` sedang jalan dan memakan update Telegram — persis pesan peringatan di test itu sendiri. Container dihentikan → 19/20 lulus, lalu **dinyalakan lagi**; lingkungan user dipulihkan.
+  6. **Peringatan operasional:** jangan pakai `git stash -u` di repo ini secara diam-diam — ia ikut mengambil file untracked. Kalau perlu membandingkan baseline, jalankan suite-nya satu per satu, bukan dengan menyingkirkan filenya.
+
+- 2026-09-27 19:05 WIB - **Tombol Uji Sesi Zoom (v2026.09.27g)**
+  1. **Tombol `zoom_test_session` di panel Backup & Restore, hanya di mode remote.** Persoalannya: kegagalan yang tidak bisa didiagnosis sendiri - file sesi ADA di disk tapi Zoom sudah menolaknya. `/status` menjawab pertanyaan yang salah (file ada?), dan satu-satunya jalan memastikan sebelumnya adalah meng-upload ulang file, yang membazir dan tidak membuktikan apa-apa kalau sesinya memang masih hidup.
+  2. **`POST /zoom/session/check` di host. Bedanya dengan `/status` adalah jenis, bukan derajat.** `snapshot()` memakai `os.path.exists(SESSION_FILE)`; `check_session_status()` memanggil `host.check_session()` yang benar-benar memuat zoom.us. Hanya yang kedua menangkap sesi basi-di-disk. **Jangan menyamakan keduanya** - keduanya bool, dan`: `snapshot()` dipakai untuk status cepat, yang live check untuk vonis.
+  3. **`host.check_session()` sudah ada sejak v2026.09.27b tapi tidak pernah tersambung ke route.** Itu sebabnya masalah ini belum ketahuan: logikanya sudah ditulis khusus untuk memisahkan "cookie basi" dari "cek-nya meledak", tapi tidak ada yang memanggilnya. Dua-duanya `False`, hanya yang pertama salah operator. Tanpa pemisahan itu, user dikirim ekspor ulang cookie yang tadinya bukan masalahnya.
+  4. **`c.answer()` dijawab SEBELUM cek lambat.** Cek ini menyalakan Chromium dan menunggu `zoom.us` - sampai 30 detik. Kalau `await`-nya ditahan, tombol berputar 30 detik dan Telegram menampilkannya sebagai tombol mati. Hasil dikirim ke pesan terpisah (`c.message.answer`), bukan berebut bubble yang sama dengan panel.
+  5. **Tiga hasil, tiga pesan.** valid / "belum ada" (pernah diunggah) / "kedaluwarsa" (pernah ada, sekarang ditolak). dua terakhir sama-sama `False` tapi_fix dan model mentalnya berbeda, jadi dibedakan lewat field `stored`. Alasan dari host diteruskan apa adanya - ia yang tahu bedanya, kita cuma menampilkan.
+  6. **`_reply_with` di `bot/handlers.py` menduplikasi `session_handlers._finish` dengan sengaja.** Yang latter meng-hardcode `reply_markup=_back_button()`; mengimpornya akan diam-diam membuang tombol Import dari pesan gagal - pesan yang justru paling butuh tombol itu.
+  7. **10 test.** Termasuk `test_the_callback_has_a_handler`, untuk kegagalan senyap yang sama kelasnya dengan bug urutan argumen: `callback_data` tanpa handler di-drop aiogram, tombol render, tap tidak melakukan apa-apa, nol baris log. Dicek lewat sumber + daftar handler router, bukan evaluasi filter, karena filternya lambda telanjang yang menutup `c` - tidak ada closure cell berisi string untuk dibaca.
+  8. **46/46 unit test hijau.** Endpoint diuji langsung dari container: `session_ready: True, stored: True, detail: ''` - sesi user memang valid. Jalur gagal (token salah) menolak 401, bukan crash. Log host: `POST /zoom/session/check` 200 + `Chromium started` on-demand.
+- 2026-09-27 18:20 WIB - **Upload sesi Zoom crash total: argumen handler terbalik (v2026.09.27f)**
+  1. **Bug produksi: `TypeError: receive_session_file() got multiple values for argument 'bot'`.** Setiap upload gagal di langkah terakhir, operator tidak melihat apa pun. Akar masalahnya adalah konvensi pemanggilan aiogram, yang sekarang WAJIB diketingati: `Handler.call` (aiogram/dispatcher/event/handler.py) melakukan `partial(self.callback, *args, **self._prepare_kwargs(kwargs))`. **Event selalu masuk slot positional PERTAMA; `bot` dan `state` datang sebagai kwargs.** Jadi parameter pertama handler WAJIB event-nya. `bot: Bot` di posisi pertama bikin event terikat ke slot bot, lalu kwargs `bot=` menabrakkan diri. Gejalanya khas dan sunyi: route terdaftar, filter cocok, handler crash di pesan pertama.
+  2. **Test lama menyalin bug-nya sendiri.** Enam call site di `tests/test_bot_session_import.py` memanggil `receive_session_file(FakeBot(...), msg, state)` - mengikuti urutan yang salah. Dipanggil langsung, tes selalu hijau tidak peduli bagaimana pun urutannya. **Bug ini mustahil terlihat tanpa melewati mekanisme aiogram.** Tes yang memanggil handler langsung tidak punya cakupan untuk kelas bug ini sama sekali.
+  3. **`tests/test_handler_dispatch_order.py` (baru, 4 test).** Yang inti membungkus callback dengan `HandlerObject` aiogram sungguhan lalu memanggilnya persis seperti dispatcher: `handler.call(event, bot=bot, state=state)`. Karena itu nama parameternya harus kebetulan cocok - tes gagal kalau urutannya salah, bukan kalau caller-nya yang salah. Ditambah sweep SEMUA handler terdaftar; regresi dibuktikan dua arah (bug dikembalikan sementara = 3 dari 4 gagal).
+  4. **Sweep harus baca router, bukan namespace modul.** Versi pertama memindai `vars(module)` dan salah tangkap 31 helper DB yang di-re-export modul ini (`add_meeting`, `get_user_by_telegram_id`, `sync_meetings_from_zoom`, dst.) - semuanya bukan handler Telegram. Sumber kebenaran: `router.<observer>.handlers`. Ada test penjaga yang membunkit jumlah handler > 90 dan memastikan `receive_session_file` sendiri ada di dalam sweep; tanpa itu, sweep yang kosong akan lolos diam-diam.
+  5. **Status sesi di menu Backup & Restore (jawaban atas request user).** Sebelumnya "apakah sesi saya tersimpan?" tidak punya jawaban di mana pun - umpan balik satu-satunya adalah konfirmasi import, yang hilang dari layar dan tidak menyebut import SEBELUMNYA. `_session_status_line()` di `bot/handlers.py` membaca `session_ready` dari host, dan itu **live check (`host.session_ready()`), bukan `os.path.exists(SESSION_FILE)`** - file bisa ada di disk sementara Zoom sudah meng-expire-nya. Persis itulah kegagalan yang peringatan import harus jelaskan. Fungsi ini tidak pernah raise: host tak terjangkau tidak boleh menutup panel.
+  6. **Docker Compose sudah benar - tidak perlu perubahan (jawaban atas request user).** `SESSION_FILE` resolve ke `/data/zoom_web_session.json` (BROWSER_STATE_DIR), dan `zoom-browser` sudah me-mount named volume `zoom_browser_state:/data` read-write. Dikonfirmasi: `zoom_web_session.json` 2.9K ada di dalam volume. **Sesi Zoom tinggal di host, bukan di bot** - volume bot (`data:/app/data` = DB + shorteners) tidak terkait, jadi `docker compose down` / recreate bot tidak menyentuh sesi. Penulisan sudah atomik (tmp + fsync + chmod 0o600 + `os.replace`), jadi crash di tengah menyisakan sesi lama yang utuh, bukan file kosong yang terlihat seperti import berhasil.
+  7. **36/36 unit test hijau** (dari 27: +4 dispatch order, 6 test session import diperbaiki). Fix ter-deploy dan terverifikasi signature-nya di dalam container.
+  8. **Dua request lama masih terbuka, dijawab ulang:** (a) Meeting `88324404243` ("Test Jumat", dibuat user 2026-07-17) yang tidak sengaja saya hapus sesi lalu - mau ditandai `deleted` atau dibiarkan terlihat sebagai pengingat? (b) Dockerfile: opsi (a) buang pip+setuptools hemat ~20MB, atau (b) biarkan (269MB = 92% base image + CPython, multistage sudah jalan).
+- 2026-09-27 18:05 WIB — **Meeting test bocor ke akun Zoom asli (v2026.09.27e)**
+  1. **14 meeting test menumpuk di akun Zoom asli dan tidak pernah dihapus.** Akar masalahnya struktural: cleanup berada **di ujung jalur bahagia**, bukan di `finally`, jadi setiap `assert` yang gagal melewatinya. Empat bocor dalam satu sore. `test_remote_host_join` bahkan **tidak punya cleanup sama sekali** — itu 6 dari 14, dan karena test itu `pytest.skip` di cabang "host tidak pernah join" (cabang yang paling sering terjadi), cleanup di jalur bahagia pun tidak akan pernah jalan.
+  2. **`created_by` bukan discriminator yang bisa dipakai.** Test memanggil bot lewat akun Telegram asli, jadi row-nya membawa user ID operator sendiri (`400501849`). Memfilter dengan itu akan ikut menghapus meeting yang dibuat manual oleh orang. Yang dikendalikan test end-to-end hanya topic.
+  3. **Matcher wajib `prefix` + timestamp utuh, bukan `startswith`.** Unit test menangkap versi `startswith` yang membuat `"Integration Test Meeting Planning"` ikut kena — itu bisa berarti rapat manusia. Perbaikan: topic harus persis `prefix` + angka unix 9-11 digit tanpa kata lain. Ada test yang mengunci kedua kasus bersama-sama (`test_a_prefix_with_a_timestamp_looks_exactly_like_a_real_one`) supaya matcher tidak pernah diam-diam jadi tidak berguna.
+  4. **Recording di-*trash* dulu, baru meeting dihapus.** Arahnya penting: kalau proses mati di tengah, yang tertinggal adalah meeting hidup dengan recording yang sudah di trash (bisa dipulihkan). Arah sebaliknya meninggalkan meeting hancur dengan recording hidup — artefak yang tidak terlihat siapa pun berbulan-bulan di tab Recordings. Dan kegagalan recording **tidak boleh** menghalangi penghapusan meeting, karena kegagalan itu permanen (bukan sementara): kalau tidak, satu scope yang hilang memblokir cleanup selamanya.
+  5. **Batasan yang harus diakui, bukan disembunyikan:** token S2S proyek ini tidak punya scope `recording:write:admin`, jadi Zoom menjawab `400 code 4711`. Jalur kodenya benar dan tetap ada; yang perlu adalah memberi scope itu di Zoom App. Sampai itu, **meeting dibersihkan, recording tidak** — dan laporan menyatakan begitu, bukan mengklaim berhasil.
+  6. **Dua database, bukan satu.** Bot normalnya jalan di container dengan file DB-nya sendiri. `mark_deleted_in_db` hanya menulis ke file host, jadi sempat tertinggal 8 row `active` di dalam container meski Zoom sudah bersih. Itu alasan opsi `--db` ditambahkan. Diverifikasi: Zoom 0 upcoming, DB host 0 active, DB container 0 active.
+  7. **`cleanup_zoom_meetings` tidak boleh raise dan tidak boleh redden test.** Ia dipanggil di dalam `finally`, jadi exception akan **mengganti** kegagalan test yang asli dan traceback aslinya hilang. Kegagalan Zoom di dalamnya hanya warning, dengan perintah perbaikan yang dicetak.
+
+  **Yang MASIH belum terbukti:** `launch()` nyata ke meeting sungguhan (selector DOM Zoom Web, `#foot-bar`, `button[class*='leave']`) belum diuji ke halaman live; yang terbukti baru **sesi terautentikasi**, bukan join.
+- 2026-09-27 08:45 WIB — **Verifikasi Docker pertama, dua bug ditemukan (v2026.09.27a)** — Docker Engine dinyalakan user; build + run pertamanya benar-benar dieksekusi. Hasil: **28.96 MiB idle, Chromium boot 153.0.8010.12, `us05web.zoom.us` HTTP 200, full stack healthy.** Tidak sesuai harapan, **dua bug nyata** ditemukan yang mustahil terlihat tanpa menjalankan.
+  1. **BUG: image Playwright tidak punya paket Python `playwright`.** `mcr.microsoft.com/playwright/python:v1.63.0-noble` ternyata hanya berisi *browser binaries* + Node CLI — `import playwright` gagal, container crash-loop dengan `ModuleNotFoundError`. Dockerfile sekarang `pip install "playwright==1.63.0"`. **Pelajaran untuk image Playwright di masa depan: nama image menyiratkan Python, tapi isinya hanya browser.** Kedua pin wajib dan harus sinkron — paket Python = yang menjalankan Chromium, tag image = build Chromium yang hopefully cocok; tidak sinkron = `Executable doesn't exist` saat launch. Ini sudah tercatat sebagai komentar di Dockerfile.
+  2. **BUG: port host 8080 bentrok.** `Antigravity IDE` memegang `127.0.0.1:8080`, publish gagal. Mapping jadi `${ZOOM_BROWSER_HOST_PORT:-8080}:8080` (`.env` = 8090). **Yang penting: mapping ini cuma buat `curl` operator — bot selalu lewat `zoom-browser:8080` di network internal, jadi bentrok port host tidak pernah menyentuh jalur bot.** Pola ini yang membuat swap backend tetap satu variabel.
+  3. **Bukti angka, bukan asumsi:** `docker stats` idle = **28.96 MiB** (bukan ±400–600 MB) → desain lazy Chromium v2026.09.26e terbukti bekerja di container nyata, bukan hanya di selfcheck. `browser_running: false` di `/status` sementara container healthy = tidak ada Chromium tersembunyi.
+  4. **Smoke test Chromium:** `goto('https://us05web.zoom.us/')` → **200**, title `One platform to connect | Zoom`. Image ternyata punya `chromium_headless_shell-1243` (default `headless=True` sejak Playwright 1.49), bukan full chromium — bukan masalah, shell itu memang yang dipakai.
+  5. **Full stack:** `zoom-browser` + `zoom-telebot-soc` dua-duanya healthy. Dari dalam container bot: `ZOOM_CONTROL_MODE=remote`, `ZOOM_REMOTE_BASE_URL=http://zoom-browser:8080`, dan `GET /status` → 200 dengan JSON benar. Jalur bot→host terbukti, bukan diasumsikan dari config saja.
+  **Yang MASIH belum terbukti:** `zoom_web_session.json` belum ada — `/data` kosong, tidak ada file di mesin dev. `session_ready: false`. Bot bisa start/poll/sync, tapi menjalankan meeting sungguhan butuh file sesi itu, yang hanya bisa dibuat user secara interaktif (display + MFA/SSO, `scripts/zoom_web_login.py`). Bot start ≠ meeting bisa jalan; jangan saling menyamakan.
+- 2026-09-26 23:58 WIB — **Lazy Chromium, container idle jadi murah (v2026.09.26e)** — Permintaan user: container tidak boleh 24 jam standby hanya menunggu link Zoom. Yang mahal adalah **Chromium**, bukan containernya, jadi solusinya memindahkan Chromium dari boot-time ke first-use — bukan mematikan container.
+  1. `remote_browser/server.py` — `lifespan` yang boot-time `host.start()` **dihapus**; `make_app()` tak lagi punya `cleanup_ctx` sama sekali. Chromium dinyalakan `_ensure_started()` pada `launch()`/`session_ready()`, dilepas `_release_if_idle()` saat `stop()` atau launch gagal.
+  2. **Rasionalnya**: idle ±400–600 MB → ±50 MB (cuma aiohttp). Container tetap hidup, jadi **nol downtime, nol restart, nol service/privilege baru**. Opsi "container benar-benar mati" ditolak karena butuh `docker.sock` (root-equivalent di host) atau cron/systemd host-side — pengorbanan keamanan atau komponen ekstra untuk hemat RAM yang sudah tercapai tanpa keduanya.
+  3. **Race yang harus ditutup**: `session_ready()` dipanggil `launch()` bisa jalan bersamaan; tanpa lock keduanya memanggil `_ensure_started()` dan me-launch dua Chromium, yang pertama bocor. Jadi `session_ready()` mengambil `self._lock`.
+  4. **Ecceksi disengaja**: `restart()` justru **meninggalkan** browser hidup, karena restart ada untuk membaca ulang `zoom_web_session.json`.
+  5. `snapshot()` dapat field baru `browser_running` — `zoom_running` nilainya `false` baik saat browser hidup maupun mati, jadi tidak bisa membedakan keduanya.
+  6. `docker-compose.yml` — `depends_on: condition: service_healthy` diganti urutan start biasa (host start <1 detik, ordering tidak berarti; health gate cuma menambah risiko bot tertahan). Ditambah `BROWSER_MEMORY_LIMIT` (1g) + `BROWSER_CPU_LIMIT` (1.0), disetel untuk kasus **meeting aktif**; sebelumnya tanpa batas, jadi runaway Chromium bisa jadi Silent OOM-kill yang mengorbankan host.
+  7. `remote_browser/selfcheck.py` — `test_browser_stays_off_until_needed` (assert tak ada browser setelah `make_app()` maupun setelah `session_ready()`, dan `/health` tetap 200 tanpa browser). Stub `no_browser` dihapus karena tak ada lifespan yang perlu di-stub. Total 10 kelompok assertion.
+  **Konsekuensi yang diterima:** cold start ±2 detik pada launch pertama tiap container. Tersembunyi di `ZOOM_REMOTE_LAUNCH_TIMEOUT` (120s) tapi **tidak** di `ZOOM_REMOTE_HOST_CONFIRM_TIMEOUT` yang juga mulai berjalan sejak request dikirim. **Ukuran image tetap ±2 GB** — lazy start menghemat RAM, bukan disk.
+- 2026-09-26 23:50 WIB — **Zoom Web host memakai `start_url` (v2026.09.26d)** — Membalikkan kesimpulan v2026.09.26c. `remote_browser/server.py` kini membuka `start_url` dari API Zoom (`https://us05web.zoom.us/s/<id>?zak=<host key>`, link **host** menurut docs `GET /v2/meetings/{meetingId}`), bukan `join_url` publik; `join_url` turun jadi cadangan. Alasan teknis: `join_url` hanya memberi peran yang Zoom tentukan dari waiting room, sedangkan `start_url` membawa host key.
+  1. `remote_browser/server.py` — `launch()` pilih `start_url` → fallback `join_url` → `400 no start_url or join_url in request`. Parameter `join_url` di-rename `launch_url` di `launch()` dan `_join()` karena sekarang dua bentuk. `_join()` kini mencatat link mana yang dipakai.
+  2. `_is_zoom_link()` — allowlist baru: `https://` + hostname persis `zoom.us` atau berakhiran `.zoom.us`. Validator lama menolak apa pun yang bukan `/j/`, jadi harus dibuang agar `start_url` bisa lewat. **Endpoint ini bertoken bearer dan memegang sesi Zoom yang sudah login**, jadi tanpa allowlist domain pemanggil bisa mengarahkan browser ke situs mana pun. Menolak juga suffix-jebakan `zoom.us.evil.com`.
+  3. `remote_browser/selfcheck.py` — `test_zak_rejected` (yang menguji penolakan `zak`) diganti 4 test: allowlist, `start_url` diterima, URL non-Zoom ditolak, URL kosong ditolak. Total 9 kelompok assertion.
+  4. Sisi bot **tidak berubah** — `bot/handlers.py` sudah mengirim `start_url` + `passcode` + `join_url` sejak v2026.09.26c.
+  5. **Perbaikan kerusakan file yang tertinggal di sesi ini**: `bot/keyboards.py` kehilangan 3 fungsi (pulih dari HEAD); `_render_launch_detail` + `_fmt_ts` hilang dari `bot/handlers.py` lalu ditulis ulang dan disambungkan ke `cb_control_zoom`; import `LoadingContext` yang sudah mati dihapus.
+  **Batas yang belum terselesaikan:** entri v2026.09.26c mencatat bukti bahwa `zak` ditolak Zoom di browser mana pun (*"Join from Zoom Workplace app"*, dengan `zoom.us` HTTP 200 dari container sehingga itu penolakan Zoom, bukan jaringan). Perilaku live `start_url` **belum diuji** — Docker daemon mati, image tidak pernah ter-build. Gejala kalau gagal: `join_timeout`. Selector DOM Zoom Web (`#foot-bar`, `.footer-button__text`, `button[class*='leave']`, `input#password`) juga belum diuji ke halaman live. Satu host satu meeting (409 sampai `BROWSER_STATE_TTL` 600s habis) — batas desain, bukan bug.
+- 2026-09-26 23:15 WIB — **Zoom Web headless host, Kasm dinyatakan gagal (v2026.09.26c)** — Backend `zoom-remote` (Kasm + Zoom Desktop) **dinyatakan gagal** dan dipindah ke compose profile `kasm`. Bukti kegagalan, bukan tebakan: container tanpa GPU memakai software rendering `llvmpipe` sehingga dialog join Zoom Desktop tak pernah selesai di-render; client menerima deep link (`zoommtg://...?pwd=...&zak=...` muncul di `zoom_stdout_stderr.log`) tapi tidak pernah menyelesaikan join, dan status tetap `waiting`. Temuan tambahan (kini **dipertanyakan** oleh v2026.09.26d): host key `zak` dianggap **desktop-only** — dibuka di browser apa pun (`us05web.zoom.us/s/<id>?zak=`, `zoom.us/s/<id>`) Zoom membalas *"Join from Zoom Workplace app"*, dan `zoom.us` kebaca HTTP 200 dari container, jadi itu penolakan Zoom, bukan masalah jaringan.
+  1. `remote_browser/server.py` — host Chromium headless + Playwright (Zoom Web). Kontrak HTTP **meniru `remote/main.go` persis** (`GET /health` tanpa auth; `GET /status`; `POST /meetings/{id}/launch|stop`; `POST /zoom/restart`; Bearer token). Konsekuensi yang disengaja: pindah backend cuma mengubah `ZOOM_REMOTE_BASE_URL` di `.env` — `zoom/remote.py`, handler bot, tabel DB, dan poller konfirmasi **tidak disentuh** secara struktural.
+  2. `remote_browser/selfcheck.py` — 6 kelompok assertion tanpa Chromium/jaringan: parsing path, klasifikasi alasan gagal, deteksi sudah-join, exclusivity host + TTL, penolakan `zak` (400), batas auth. **Gtk: penolakan `zak` dibatalkan di v2026.09.26d dan diganti allowlist domain Zoom.**
+  3. `scripts/zoom_web_login.py` — login sekali di PC operator → `zoom_web_session.json` (Playwright `storage_state`) → `docker cp` ke volume. Dipakai `storage_state`, bukan email/password, karena akun biasanya di balik MFA/SSO.
+  4. `remote_browser/Dockerfile` — base `mcr.microsoft.com/playwright/python:v1.63.0-noble`, non-root `pwuser`, healthcheck stdlib `urllib`, volume state `/data`.
+  5. `zoom/remote.py` — `launch_meeting()` dapat parameter opsional `join_url` (publik `https://zoom.us/j/<id>?pwd=`) selain `start_url` (berisi `zak`). Keduanya dikirim agar satu panggilan melayani dua backend; parameter opsional jadi backward-compatible.
+  6. `bot/handlers.py` `cb_start_zoom_meeting` — ambil `join_url` dari `meeting_details`, teruskan; guard `if start_url:` → `if start_url or join_url:`.
+  7. `requirements-dev.txt` — `playwright==1.63.0` di-pin sama dengan tag image. Image bot tidak mengimpornya; hanya script login + container host.
+  8. `.gitignore` — `zoom_web_session.json` diabaikan (kredensial hidup: cookie sesi Zoom), diverifikasi via `git check-ignore`.
+  **Batas yang belum terselesaikan:** selector DOM Zoom Web (`#foot-bar`, `.footer-button__text`, `button[class*='leave']`, `input#password`) belum diuji terhadap halaman live — image belum ter-build karena Docker daemon mati saat perubahan ini dibuat. **Jalur `join_url` masuk sebagai peserta, bukan host asli** (browser ditolak memakai `zak`); dengan `ZOOM_WAITING_ROOM=true` Zoom tidak meng-admit dia otomatis → `waiting_room_not_admitted`. Satu host hanya bisa satu meeting (409 sampai `BROWSER_STATE_TTL` habis) — batas desain, bukan bug.
+- 2026-09-26 22:40 WIB — **Host Join Otomatis & Konfirmasi Tanpa Webhook (v2026.09.26)** — Menutup gap "bot tidak bisa memastikan host sudah join". Temuan kunci: fitur host-join sendiri sudah bekerja, tapi `live_status` hanya bisa maju lewat Zoom webhook, yang belum dikonfigurasi. Tiga artefak di kode yang sudah ada tapi belum terpakai saat itu: `settings.zoom_remote_host_confirm_timeout`, `db.get_remote_launch_state()`, dan `RemoteZoomClient.status()`. Perubahan:
+    1. `bot/background_tasks.py` — task `_host_confirmation_watch` mem-poll `GET /v2/meetings/{id}` tiap 10 detik untuk row `launch_requested`; menandai `started` saat Zoom mengonfirmasi, `failed` saat status `ended`/`deleted`/not-found, atau lewat `ZOOM_REMOTE_HOST_CONFIRM_TIMEOUT`. Poll error diperlakukan transien agar tidak membatalkan launch.
+    2. `db/db.py` — tambah `list_meetings_pending_launch()` (WAJIB `detect_types=sqlite3.PARSE_DECLTYPES` agar `launch_requested_at` jadi `datetime`, bukan string) dan `mark_remote_launch_failed()` (di-guard `WHERE live_status='launch_requested'` untuk menang balasan dengan webhook).
+    3. `bot/handlers.py` — `cb_control_zoom` kini baca `get_remote_launch_state()` dan render lewat `_render_launch_detail()`; `cb_start_zoom_meeting` menyimpan pesan exception (dipotong 200 char) ke `last_remote_error`, bukan cuma `type(e).__name__`.
+    4. `db/schema.sql` — komentar `live_status` diperbarui; kode menulis 5 state (`not_started`, `launch_requested`, `started`, `ended`, `failed`), dokumentasi lama hanya menyebut 3.
+    5. `Readme.md` — section baru `🖥️ Remote Host` (env wajib/opsional, login Kasm sekali saja, dua jalur konfirmasi, tabel troubleshooting), plus `🤝 Contributing` dan file `LICENSE` (MIT) yang sebelumnya dirujuk tapi tidak ada. `tests/host_confirmation_selfcheck.py` menambah 9 assertion group.
 - 2026-07-17 17:48 WIB — **Zoom Remote Port Mapping (v2026.07.17)** — Mapped remote agent API port 8080 to host machine in `docker-compose.yml` to allow direct API verification (via curl) and local host development/testing.
 - 2026-07-17 17:25 WIB — **Zoom Controls & Details Testing (v2026.07.17)** — Added a second automated integration test suite (`tests/test_meeting_details_controls.py`) to verify the Zoom Control screen and Meeting Details screen. Resolved Telethon message caching and Telegram HTML constraints (unescaped '&' parsing error, localhost URL limitations).
 - 2026-07-17 09:30 WIB — **Telegram Bot Integration Testing (v2026.07.17)** — Added a comprehensive automated integration test suite (`tests/test_bot_integration.py`) using `Telethon` to test the bot end-to-end. It features direct DB whitelisting (to automatically grant owner role to the client account), automated bot subprocess management with token conflict detection, and robust UI interaction testing (inline buttons, FSM text messaging prompts, and Zoom creation/deletion).
@@ -150,13 +257,13 @@ CREATE TABLE users (
 )
 ```
 **Purpose**: Store Telegram users with role-based access control  
-**Key Fields**: 
+**Key Fields**:
 - `telegram_id`: Unique Telegram user ID (cannot be duplicate)
 - `username`: Telegram username for display
 - `status`: Whitelist approval status (pending → whitelisted/banned)
 - `role`: Access level (guest < user < owner)
 
-**Status Flow**: 
+**Status Flow**:
 ```
 pending → whitelisted (approved by owner)
 pending → banned (rejected by owner)
@@ -506,42 +613,40 @@ Stored cloud_recording_data structure:
 #### Shortlink Management Functions
 ```python
 # CRUD Operations
-add_shortlink(original_url, short_url, provider, custom_alias, zoom_meeting_id, created_by, error_message) → int
-update_shortlink_status(shortlink_id, status, short_url, error_message)
-
+add_shortlink(original_url, short_url, provider, custom_alias, zoom_meeting_id, created_by, error_message)` → int
+update_shortlink_status(shortlink_id, status, short_url, error_message)` → None
 # Queries
-get_shortlinks_by_user(created_by, limit) → List[Dict]
-get_shortlink_stats() → Dict  # total, active, failed, by_provider
+get_shortlinks_by_user(created_by, limit)` → List[Dict]
+get_shortlink_stats()` → Dict  # total, active, failed, by_provider
 ```
 
 #### Agent Management Functions
 ```python
 # Agent Registry
-add_agent(name, base_url, api_key, os_type, hostname, ip_address, version) → int
-list_agents(limit, offset) → List[Dict]
-count_agents() → int
-get_agent(agent_id) → Dict | None
-remove_agent(agent_id)
-update_agent_last_seen(agent_id)
-
+add_agent(name, base_url, api_key, os_type, hostname, ip_address, version)` → int
+list_agents(limit, offset)` → List[Dict]
+count_agents()` → int
+get_agent(agent_id)` → Dict | None
+remove_agent(agent_id)`
+update_agent_last_seen(agent_id)`
 # Command Queue
-add_command(agent_id, action, payload) → int
-get_pending_commands(agent_id) → List[Dict]
-update_command_status(command_id, status, result)
-check_timeout_commands() → int  # Returns count of timed-out commands
+add_command(agent_id, action, payload)` → int
+get_pending_commands(agent_id)` → List[Dict]
+update_command_status(command_id, status, result)`
+check_timeout_commands()` → int  # Returns count of timed-out commands
 ```
 
 #### Backup & Restore Functions
 ```python
 # Backup Operations
-backup_database() → str  # Returns SQL dump path
-backup_shorteners() → str  # Returns JSON backup path
-create_backup_zip(db_dump_path, shorteners_path) → str  # Returns ZIP path
+backup_database()` → str  # Returns SQL dump path
+backup_shorteners()` → str  # Returns JSON backup path
+create_backup_zip(db_dump_path, shorteners_path)` → str  # Returns ZIP path
 
 # Restore Operations
-restore_database(sql_dump_path) → Dict[str, int]  # Returns stats
-restore_shorteners(backup_path) → bool
-extract_backup_zip(zip_path, extract_to) → Dict[str, str]  # Returns extracted file paths
+restore_database(sql_dump_path)` → Dict[str, int]  # Returns stats
+restore_shorteners(backup_path)` → bool
+extract_backup_zip(zip_path, extract_to)` → Dict[str, str]  # Returns extracted file paths
 ```
 
 #### Database Initialization
@@ -1071,7 +1176,7 @@ text += f"🔐 <b>Passcode:</b> {passcode}\n"
 **Problem**: `NameError: name 'is_agent_control_enabled' is not defined`
 - ✅ **Solution**: Added public wrapper function `is_agent_control_enabled()`
 - ✅ **Location**: Lines 46-56 in bot/handlers.py
-- ✅ **Purpose**: Expose internal `_is_agent_control_enabled()` for public use
+- ✅ **Purpose**: Expose internal `_is_agent_control_enabled()` for
 - ✅ **Usage**: Used across handlers untuk check agent mode
 
 #### 6. Verified In-Place Message Updates
@@ -1155,7 +1260,7 @@ text += f"🔐 <b>Passcode:</b> {passcode}\n"
 **PERINGATAN: Ini adalah perbaikan CRITICAL dari implementasi sebelumnya yang terbalik!**
 
 - ✅ **Perbaikan logika auto-recording** yang sebelumnya terbalik:
-  - **Agent ENABLED** → `auto_recording = "local"` (Local Recording untuk Agent control)
+  - **Agent ENABLED** → `auto_recording = "local"` (Local Recording untuk Agent control & flexibility)
   - **Agent DISABLED** → `auto_recording = "cloud"` (Cloud Recording, butuh Zoom license)
   
 - ✅ **Alasan perubahan**:
@@ -1523,7 +1628,7 @@ git push origin feature/agent-control-ui-filtering
 
 ---
 
-## � Complete Database Migration Documentation (v2025.12.31.6 - Dec 31, 2025 20:15 WIB)
+## ✏ Complete Database Migration Documentation (v2025.12.31.6 - Dec 31, 2025 20:15 WIB)
 
 **Status**: ✅ All migrations documented, integrated with config, and tested
 
@@ -1584,7 +1689,7 @@ async def run_migrations(db):
 
 ---
 
-## �🔧 Database Schema Migration Fix (v2025.12.31.5 - December 31, 2025)
+## 📌🔧 Database Schema Migration Fix (v2025.12.31.5 - December 31, 2025)
 
 **Problem**: `sqlite3.OperationalError: no such column: cloud_recording_data`
 
@@ -1817,7 +1922,7 @@ docker logs -f bot_container
 ## 📋 Phase 10: Cloud Recording Passcode Display (December 31, 2025 20:45 WIB - v2025.12.31.8)
 
 ### ✅ Feature: Display Zoom Cloud Recording Passcode
-**Problem:** Cloud recordings yang protected by passcode memerlukan user manual input passcode, making user experience less smooth.
+**Problem**: Cloud recordings yang protected by passcode memerlukan user manual input passcode, making user experience less smooth.
 
 **Solution Implemented:**
 1. **Passcode Extraction**: Parse `password` field dari Zoom API `/v2/meetings/{id}/recordings` response
@@ -1848,7 +1953,7 @@ Files: 1
 [Download] [Play]
 ```
 
-**Code Location:**
+**Code Location**:
 - File: [bot/cloud_recording_handlers.py](bot/cloud_recording_handlers.py)
 - Lines 383-390: Passcode extraction and display logic
 - Lines 407-413: Passcode rendering in message text
@@ -1873,11 +1978,11 @@ Files: 1
 ## 📋 Phase 11: Simplified Cloud Recording UI (December 31, 2025 20:50 WIB - v2025.12.31.9)
 
 ### ✅ Feature: Simplify Cloud Recording Download UI
-**Problem:** Terlalu banyak tombol untuk file-file yang jarang didownload (M4A, TIMELINE, TRANSCRIPT, CC, Play button)
+**Problem**: Terlalu banyak tombol untuk file-file yang jarang didownload (M4A, TIMELINE, TRANSCRIPT, CC, Play button)
 
 **Solution Implemented:**
 1. **Only MP4 Download**: Hanya tampilkan tombol "📥 Download MP4" saja
-2. **Remove Extra Buttons**: Hapus tombol Play, M4A, TIMELINE, TRANSCRIPT, CC
+2. **Remove Extra Buttons**: Hapus tombol Play, M4A, TIMELINE, TRANSCRIPT, CC, Share URL button
 3. **Keep File Info**: Tetap tampilkan info semua file type (untuk referensi), tapi hanya MP4 yang bisa didownload
 4. **Remove Share Button**: Hapus "Open in Zoom Web" button
 
@@ -1937,11 +2042,11 @@ for file in mp4_files:
 ## 📋 Phase 12: Meeting Status Renamed - expired → done (December 31, 2025 21:00 WIB - v2025.12.31.10)
 
 ### ✅ Feature: Rename Meeting Status from "expired" to "done"
-**Problem:** Status "expired" kurang semantik dan agak membingungkan. "done" lebih intuitif dan user-friendly.
+**Problem**: Status "expired" kurang semantik dan agak membingungkan. "done" lebih intuitif dan user-friendly.
 
 **Changes Made:**
 1. **Database Status**: All `status = 'expired'` → `status = 'done'`
-2. **UI Labels**: "Ditandai Expired" → "Ditandai Done"
+2. **UI Labels**: "Ditandai Expired:" → "Ditandai Done"
 3. **Messages**: "expired" → "done" di semua text display
 
 ### Files Modified
@@ -1987,16 +2092,16 @@ for file in mp4_files:
 ## 📋 Phase 13: Fixed Meeting List Time Range with Proper Timezone (December 31, 2025 21:05 WIB - v2025.12.31.11)
 
 ### ✅ Bug Fix: Meeting List Not Showing from 00:00 (Midnight)
-**Problem:** Meeting list masih tidak menampilkan meetings dari jam 00:00 (tengah malam) di hari tersebut. 
+**Problem**: Meeting list masih tidak menampilkan meetings dari jam 00:00 (tengah malam) di hari tersebut. 
 Hanya menampilkan meetings dari waktu saat ini saja (contoh: 19:35 ke depan).
 
-**Root Cause:** Timezone handling di Zoom API integration kurang tepat. Zoom API memerlukan:
+**Root Cause**: Timezone handling di Zoom API integration kurang tepat. Zoom API memerlukan:
 1. Parameter `from` dan `to` dalam format UTC ISO (bukan local time)
 2. Konversi timezone yang benar dari Jakarta (UTC+7) ke UTC
 
 **Solution Implemented:**
 1. **Timezone Conversion**: Convert Jakarta time → UTC untuk API request
-2. **Midnight Start**: Hitung 00:00 Jakarta time, baru convert ke UTC
+2. **Midnight Start**: Hitung 00:00:00 of current day (in Jakarta time)
 3. **Proper Range**: from = 00:00 Jakarta (UTC) → to = 00:00 + 30 hari (UTC)
 
 ### Modified Files
@@ -2047,7 +2152,7 @@ to_date = (today_start + timedelta(days=30)).astimezone(timezone.utc).isoformat(
 ## 📋 Phase 14: Cloud Recording Display - Only MP4 with Formatted Date (December 31, 2025 21:15 WIB - v2025.12.31.12)
 
 ### ✅ Feature: Simplify Cloud Recording Files Display
-**User Request:** "Untuk tampilan ini cukup tampilkan File MP4nya saja di Chat, kemudian Startnya di convert juga ke Standar Format Tanggal di script ini!"
+**User Request**: "Untuk tampilan ini cukup tampilkan File MP4nya saja di Chat, kemudian Startnya di convert juga ke Standar Format Tanggal di script ini!"
 
 **Problem Solved:**
 1. Terlalu banyak file types ditampilkan (MP4, M4A, TIMELINE, TRANSCRIPT, CC)
@@ -2164,7 +2269,7 @@ This format matches the standard date display used elsewhere in the application:
 ## 📋 Phase 15: Dynamic User Timezone for Cloud Recording Dates (December 31, 2025 21:20 WIB - v2025.12.31.13)
 
 ### ✅ Feature: Use .env Timezone Instead of Hardcoded Jakarta
-**User Request:** "Jangan Convert ke Jakarta, sesuaikan dengan Timezone User sesuai .env!"
+**User Request**: "Jangan Convert ke Jakarta, sesuaikan dengan Timezone User sesuai .env!"
 
 **Problem Addressed:**
 - Phase 14 hardcoded Jakarta timezone (UTC+7)
@@ -2201,19 +2306,19 @@ local_dt = dt.astimezone(user_tz)
 
 ### Implementation Details
 
-**Timezone Source:**
+**Timezone Source**:
 ```python
 # config/config.py (line 76)
 timezone: str = os.getenv("TIMEZONE") or os.getenv("TZ") or os.getenv("PYTZ_TIMEZONE", "Asia/Jakarta")
 ```
 
-**Priority Order:**
+**Priority Order**:
 1. `TIMEZONE` environment variable (primary)
 2. `TZ` environment variable (fallback)
 3. `PYTZ_TIMEZONE` environment variable (fallback)
 4. `"Asia/Jakarta"` (default)
 
-**Example .env Configurations:**
+**Example .env Configurations**:
 
 ```bash
 # Option 1: Jakarta timezone
@@ -2360,7 +2465,7 @@ Cloud Recording Files View (MP4 list)
 ## 📋 Phase 17: Cloud Recording List Pagination and Sorting (December 31, 2025 21:25 WIB - v2025.12.31.15)
 
 ### ✅ Feature: Pagination (5 per page) and Sorting (Newest First)
-**User Request:** "Pastikan per halaman hanya 5 Recording, Urutannya adalah Meeting yang baru saja selesai ke yang paling lama!"
+**User Request**: "Pastikan per halaman hanya 5 Recording, Urutannya adalah Meeting yang baru saja selesai ke yang paling lama!"
 
 **Problem Addressed:**
 1. Cloud recording list bisa sangat panjang jika banyak meetings
@@ -2487,9 +2592,9 @@ Page 3/3:
 
 ### Sorting Logic
 
-**Sort Key:** `start_time` field from meeting data
-**Order:** Descending (reverse=True)
-**Format:** ISO 8601 datetime
+**Sort Key**: `start_time` field from meeting data
+**Order**: Descending (reverse=True)
+**Format**: ISO 8601 datetime
 
 **Example Timeline:**
 ```
@@ -2501,8 +2606,8 @@ Page 3/3:
 
 ### Pagination Logic
 
-**Items per page:** 5
-**Formula:** `total_pages = (total_items + 4) // 5`
+**Items per page**: 5
+**Formula**: `total_pages = (total_items + 4) // 5`
 
 **Examples:**
 ```
@@ -2546,7 +2651,7 @@ User clicks "Berikutnya ▶️" → callback: list_cloud_recordings:2
 
 ### ✅ FSM Feature is FULLY IMPLEMENTED and ACTIVE
 
-**Verification Result:** The `fsm_states` table appears empty because FSM states are created **dynamically** when users interact with the bot, not during initialization.
+**Verification Result**: The `fsm_states` table appears empty because FSM states are created **dynamically** when users interact with the bot, not during initialization.
 
 ### Implementation Status
 
@@ -2655,7 +2760,7 @@ Time 0:20    → User continues where they left off: FSM state restored ✅
 │    user_id: 12345                                            │
 │    state: "ZoomEditStates:waiting_for_topic"                │
 │    data: {"meeting_id": "123", "topic": "test"}            │
-│    updated_at: 2025-12-31 21:30:00                         │
+│    updated_at: 2025-12-31...
 └────────────┬────────────────────────────────────────────────────┘
              │
              ↓
@@ -2747,7 +2852,7 @@ The empty `fsm_states` table is expected during testing. It will automatically p
 
 **Issue Observed:** When user clicks 🔄 Refresh button in cloud recording view, it sends a **new message** instead of updating the existing message in-place.
 
-**Root Cause:** Handler called `await c.answer("Mengambil cloud recordings...")` which sends a new message to chat.
+**Root Cause**: Handler called `await c.answer("Mengambil cloud recordings...")` which sends a new message to chat.
 
 **Solution Implemented:**
 1. **Removed**: `await c.answer("Mengambil cloud recordings...")` (line 347)
@@ -2821,7 +2926,7 @@ User clicks Refresh
     ↓
 cb_view_cloud_recordings() called
     ↓
-await c.answer()  → Acknowledge silently (no new message)
+await c.answer()  → Acknowledge silently (no message sent)
     ↓
 Fetch recording data from Zoom API or cache
     ↓
@@ -2832,7 +2937,7 @@ User sees updated content (same message)
 
 ### Technical Details
 
-**Callback Methods:**
+**Callback Methods**:
 - `c.answer()` - Acknowledge callback silently (no message sent)
 - `c.answer("text")` - Send new message (was causing spam)
 - `m.edit_text()` - Update existing message (via `_safe_edit_or_fallback()`)
@@ -2854,7 +2959,7 @@ User sees updated content (same message)
 
 **Issue Fixed:** GitHub Actions workflows gagal menemukan Dockerfile saat build
 
-**Root Cause:**  
+**Root Cause**:  
 Dockerfile terletak di `docker/Dockerfile`, namun `COPY docker-entrypoint.sh` tidak menyertakan prefix path yang benar karena build context adalah root directory (`.`), bukan folder `docker/`.
 
 **Solution:**
@@ -2875,7 +2980,7 @@ Dockerfile terletak di `docker/Dockerfile`, namun `COPY docker-entrypoint.sh` ti
 - [.github/workflows/Build-Dev.yml](.github/workflows/Build-Dev.yml) - Development build & push
 - [docker/Dockerfile](docker/Dockerfile) - Multi-stage production image
 
-**Technical Context:**  
+**Technical Context**:  
 Docker build-push-action menggunakan BuildKit dengan context root (`.`). Semua `COPY` command dalam Dockerfile relatif terhadap context ini, bukan terhadap lokasi Dockerfile itu sendiri.
 
 **Deployment Status (Dec 31, 2025 23:50 WIB):**
@@ -2897,10 +3002,75 @@ Docker build-push-action menggunakan BuildKit dengan context root (`.`). Semua `
 
 ---
 
+## 📋 Phase 19: Remote Zoom Host Join - Root Cause Analysis (September 26, 2026 09:00 WIB - v2026.09.26b)
+
+> **Status: BELUM SELESAI.** Launch diterima, Zoom start, tapi meeting tetap `status = waiting`. Section ini mencatat apa yang sudah dibuktikan dan apa yang masih jadi blocker, supaya sesi berikutnya tidak mengulang diagnosa yang sama.
+
+### Sudah Terbukti Bekerja
+
+| Komponen | Status | Bukti |
+|---|---|---|
+| Launch via controller | ✅ | `{"accepted":true,"meeting_id":"85895463055","state":"opened"}` |
+| Deep link `zoommtg://` + `zak` | ✅ | `cmd line: --no-sandbox zoommtg://...confno=85895463055&pwd=bdY3n4&zak=...` di `zoom_stdout_stderr.log` |
+| CEF render (black screen) | ✅ | `exit code 21` = 0, luma `YAVG=228` (sebelumnya 0) |
+| Zoom signed in | ✅ | window `Zoom Workplace - Licensed account`, profile DB 78 KB → 132 KB |
+| Kill + relaunch bersih | ✅ | loop `already-running` beku di 14 |
+| `go vet` + test | ✅ | `ok zoomremote 0.015s` |
+
+### Root Cause yang Ditemukan (6 bug)
+
+1. **Passcode tidak pernah terkirim** — start_url dari API adalah `https://us05web.zoom.us/s/<id>?zak=<JWT>`, **tidak ada `pwd`**. `deepLink()` hanya menyalin `pwd` dari query string sehingga hasilnya `zoommtg://...?confno=X&zak=Y` tanpa passcode → client berhenti di prompt. Fix: `launchRequest` dapat field `passcode`; `deepLink(startURL, fallbackPasscode)` memakainya hanya bila URL tidak punya `pwd`.
+
+2. **Zombie process mengunci semua launch berikutnya** — `pgrep -x` menghitung zombie (state `Z`) sebagai hidup. `ZoomWebviewHost` yang di-`SIGKILL` sebelum parent-nya mati tidak pernah di-reap, jadi menggantung selamanya → `killZoomAndWait` timeout → HTTP 500 pada setiap launch setelah yang pertama. Fix: `liveProcess(name)` baca `/proc/<pid>/stat` dan abaikan state `Z`. Loop kill juga harus mengecek `ZoomWebviewHost`, bukan cuma `zoom` + `ZoomLauncher`.
+
+3. **CEF singleton lock di DUA tempat** — `data/cefIpcChannel/` **dan** `data/cefcache/`. `clearCEFSockets()` hanya membersihkan yang pertama sehingga `ContentMainRun failed with exit code 21` tetap muncul. Fix: `clearCEFState(dir)` di keduanya, hapus hanya entri berawalan `Singleton*` agar CEF cache bawaan image tetap utuh.
+
+4. **`ZoomWebviewHost` dibungkus bash** — Dockerfile lama me-rename binary ELF ke `.bin` lalu mengganti aslinya dengan wrapper `--no-sandbox`. Akibatnya `ZoomWebviewHost finally lanuch state is false` dan dialog join tidak pernah ter-render. Image Kasm sudah non-root, jadi binary asli cukup. **Baris `mv`/`printf` sudah dihapus dari `remote/Dockerfile`.**
+
+5. **`XDG_RUNTIME_DIR` kosong** — single-instance lock Zoom ada di sana. Tanpa itu hand-off deep link antar `ZoomLauncher` tidak selesai. Fix: `export` di `custom_startup.sh` + env di `docker-compose.yml`.
+
+6. **Launch loop + state macet** — `pkill -9` tanpa tunggu → 14× `Exit zoom as another zoom instance is running!`. Dan `state` tidak pernah maju sehingga 409 selamanya. Fix: `killZoomAndWait()` poll, `stateTTL = 10m`.
+
+### Yang Sudah Diryantikan (jangan dicoba lagi)
+
+- ❌ **Chrome web client / kiosk.** Host link `zak` itu **desktop-only**. Di browser mana pun (`us05web.zoom.us/s/<id>?zak=`, `us05web.zoom.us/j/<id>?pwd=&zak=`, `zoom.us/s/<id>`) Zoom mengembalikan halaman *"Join from Zoom Workplace app"*. `zoom.us` terjangkau dari container (HTTP 200) — ini penolakan Zoom, bukan masalah jaringan.
+- ❌ **`xdg-open` untuk start_url.** Me-rutekan ke Firefox (tidak ada binarynya), lalu harus mengembalikan `zoommtg://` balik ke Zoom. Bolak-balik itu titik join-nya hilang. Sudah diganti exec langsung ke `ZoomLauncher`.
+- ❌ **Tiga bentuk deep link lain.** `action=join`, tanpa `action`, dan `start_url` mentah — semuanya berakhir di home window.
+
+### Blocker yang Tersisa
+
+Client **menerima** deep link (ada di log) tapi **tidak menyelesaikan join** tanpa interaksi. Dugaan: software rendering tanpa GPU.
+
+```
+GL_RENDERER: llvmpipe (LLVM 15.0.7, 256 bits)   ← tidak ada GPU
+Qt Quick Layouts: Detected recursive rearrange. Aborting after two iterations.
+ZoomWebviewHost finally lanuch state is false
+glxinfo → Accelerated: no
+```
+
+Capture `xwd` pada window dialog 1230x723 menghasilkan **noise berwarna** — surface-nya tidak pernah ter-render, jadi tidak ada tombol yang bisa diklik. `xdotool key Return` ke window itu tidak mengubah apa pun.
+
+### ⚠️ Jebakan Diagnostik (penting)
+
+- **`pkill -f zoom` di dalam container mematikan `zoom-remote-controller`.** Kode Go sengaja pakai `pkill -x` dan `pkill -f '*.bin'` sehingga aman, tapi perintah ad-hoc sangat berbahaya. Sudah mematikan controller 2× selama sesi ini.
+- **Dua tool screenshot tidak sinkron.** `ffmpeg -x11grab` melaporkan desktop abu-abu datar, `xwd` pada root melaporkan 134 warna berbeda. **Jangan menyimpulkan "layar hitam" dari `ffmpeg` saja.**
+- **Root window 1528x794 tapi screen 1024x768.** Window desktop XFCE lebih besar dari layar — crop sebelum menafsirkan.
+- **`config/config.py:5` memanggil `load_dotenv(override=True)` di level import.** Env var dari test **selalu ditimpa** oleh `.env`. Patch `settings.zoom_remote_base_url` setelah import (lihat `tests/_bot_host_launcher.py`), jangan set env var.
+- **`ZOOM_REMOTE_VNC_PASSWORD` == `ZOOM_WEBHOOK_SECRET_TOKEN` == `MasterPassword123!`, dan nilainya terlihat di argumen proses container (`kasm_user:MasterPassword123!`). Rotasi setelah flow stabil. `ZOOM_REMOTE_PUBLIC_URL` masih placeholder `https://example.com`.
+
+### Opsi Lanjutan
+
+1. **Zoom Meeting SDK** — jalur resmi untuk host yang join tanpa perhatian. Butuh tier berbayar + dependency SDK, tapi menghilangkan GUI, masalah GPU, dan kebutuhan klik sepenuhnya.
+2. **Klik otomatis via `xdotool`** — sempat dipasang di container untuk diagnosa (masih ada, **tidak** ada di Dockerfile). Tidak akan berhasil selama dialog tidak ter-render.
+3. **Komputer dengan GPU / `--device /dev/dri`** — `llvmpipe` dicurigai sebagai penyebab utama. Hanya opsi kalau host yang jalan memang punya GPU.
+
+### Cara Cek Cepat
+
+- `python scripts/check_zoom_login.py` — cek apakah container sudah signed in
+- `python scripts/read_container_logs.py --services zoom-remote` — ringkasan error log
+- `go test ./...` di `remote/` — test `deepLink`/`redactLink`/`liveProcess`
+- `docker compose logs zoom-remote | Select-String "joining as"` — konfirmasi passcode + host key terbawa
+
 ---
 
-**This file is for AI assistant reference only. Contains sensitive development context and should never be committed to public repositories.**
-
----
-
-**This file is for AI assistant reference only. Contains sensitive development context and should never be committed to public repositories.**
+**This file is for AI assistant reference only. Contains sensitive development context and should never be committed to public repositories.

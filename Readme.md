@@ -33,6 +33,7 @@ Bot Telegram yang efisien untuk mengelola rapat Zoom, dirancang dengan fitur-fit
   - **Alias Kustom**: Mendukung alias kustom jika provider menyediakannya.
 - **Backup & Restore**:
   - `/backup`: Buat file backup `.zip` berisi database (SQL) dan konfigurasi shortener.
+    (Menu **💾 Backup & Restore** membuka panel tombol, termasuk import sesi Zoom.)
   - `/restore`: Pulihkan data bot dari file backup.
 - **Deployment**:
   - **Docker Ready**: Konfigurasi lengkap menggunakan Docker Compose untuk lingkungan `development` dan `production`.
@@ -185,6 +186,208 @@ Semua konfigurasi diatur melalui file `.env`.
 | `SID_ID` / `SID_KEY`   | Kredensial untuk layanan shortener S.id.                                | Tidak      |
 | `BITLY_TOKEN`          | Token akses untuk layanan shortener Bitly.                              | Tidak      |
 | `LOG_LEVEL`            | Level logging (DEBUG, INFO, WARNING, ERROR). Default: `INFO`.           | Tidak      |
+
+### 🖥️ Zoom Host (Host-join Otomatis)
+
+Bot membuka Zoom dan menjadi host tanpa Anda join manual. Default-nya **browser
+headless** (`zoom-browser`), bukan Zoom Desktop.
+
+#### Backend: `zoom-browser` (default, sejak v2026.09.26c)
+
+Headless Chromium + Playwright menjalankan **Zoom Web**. Browser membuka
+`start_url` dari API Zoom — `https://us05web.zoom.us/s/<id>?zak=<host key>`,
+yaitu link **host**. `join_url` (`/j/<id>?pwd=`) hanya dikirim sebagai cadangan
+apabila `start_url` tidak ada atau ditolak.
+
+> ⚠️ Jalur ini **belum terverifikasi terhadap Zoom live**. Versi sebelumnya
+> menyimpulkan `zak` bersifat desktop-only karena browser mengembalikan halaman
+> *"Join from Zoom Workplace app"*. Implementasi sekarang sengaja memakai
+> `start_url` sesuai dokumentasi resmi Zoom
+> ([GET /v2/meetings/{meetingId}](https://developers.zoom.us/docs/api/meetings/#tag/meetings/get/meetings/{meetingId})),
+> dengan `join_url` sebagai jaring pengaman. Kalau launch berakhir
+> `join_timeout`, periksa dulu log `zoom-browser` sebelum menyimpulkan apa pun.
+
+Backend Kasm (`zoom-remote`) **dinyatakan gagal** dan disimpan sebagai profil
+opsional. Alasannya teknis, bukan konfigurasi: container tanpa GPU memakai
+software rendering `llvmpipe`, dan dialog join Zoom Desktop tidak pernah selesai
+di-render — client menerima deep link tapi tidak pernah benar-benar join.
+
+##### Yang WAJIB dikonfigurasi
+
+| Variabel | Kenapa wajib |
+| -------- | ------------ |
+| `ZOOM_REMOTE_API_TOKEN` | **Tanpa ini semua panggilan ke host gagal.** Harus sama persis dengan `BROWSER_API_TOKEN` di `docker-compose.yml`. |
+| `ZOOM_REMOTE_BASE_URL` | Default compose sudah `http://zoom-browser:8080`. **Wajib diubah ke `http://zoom-remote:8080` bila memakai profil `kasm`.** |
+
+##### Login Zoom Web (sekali saja)
+
+Playwright memakai cookie sesi, bukan email/password — akun Anda biasanya ada
+di balik MFA/SSO yang tidak bisa diotomatiskan. Jadi login manual **sekali**,
+lalu kirim hasil sesinya ke bot.
+
+**Cara utama — lewat Telegram (disarankan):**
+
+1. Login di browser ke `https://zoom.us`, lalu buka Cookie Editor →
+   **Export** → pilih **JSON**.
+2. Di bot: menu utama → **💾 Backup & Restore** → **🔐 Import Sesi Zoom** →
+   kirim file `.json` tersebut.
+
+> Perintah `/backup` membuat file zip secara langsung, jadi **tidak** membuka
+> panel tombol. Untuk import sesi, klik tombolnya.
+
+Bot meneruskan file apa adanya ke host. Host memfilter cookie non-Zoom,
+mengubahnya ke format storage state Playwright, menyimpan secara atomik, lalu
+memverifikasi ke Zoom. Bot membalas berbeda bila sesi ditolak (mis. kedaluwarsa)
+atau diterima tapi tidak tertaut — jadi Anda tahu file mana yang gagal.
+
+> Import **ditolak (409)** selagi ada meeting yang sedang berjalan, karena
+> memuat ulang sesi akan mematikan browser yang sedang dipakai meeting itu.
+
+**Cara cadangan — lewat host:**
+
+```bash
+# 1. Di PC Anda (butuh display + Playwright):
+pip install -r requirements-dev.txt
+python scripts/zoom_web_login.py
+#    Jendela browser terbuka. Login sebagai akun HOST, selesaikan MFA/SSO.
+#    Menghasilkan ./zoom_web_session.json
+
+# 2. Salin ke volume container:
+docker compose up -d zoom-browser
+docker cp zoom_web_session.json zoom-browser:/data/zoom_web_session.json
+
+# 3. Restart agar sesi ter-load:
+docker compose restart zoom-browser
+```
+
+> `zoom_web_session.json` adalah **kredensial hidup** (cookie sesi Zoom).
+> Sudah masuk `.gitignore`. Jangan pernah di-commit.
+
+##### Menjalankan self-check host
+
+`remote_browser/selfcheck.py` menutup routing, guard, konversi cookie, dan
+bookkeeping restart. Di PC cukup:
+
+```bash
+python remote_browser/selfcheck.py
+```
+
+Satu kelompok di-skip di PC karena binary Chromium hanya ada di image.
+Untuk cakupan penuh — termasuk test restart yang menangkap bug context mati —
+jalankan di dalam container:
+
+```bash
+docker cp remote_browser/selfcheck.py zoom-browser:/tmp/
+docker compose exec zoom-browser cp /app/server.py /tmp/
+docker compose exec -w /tmp zoom-browser python selfcheck.py
+```
+
+> Jalankan di kedua tempat. Test yang hanya hijau di PC bisa pecah di
+> container, karena ada variabel yang tidak ada di salah satu sisi.
+
+##### Menjalankan test bot (tanpa token, tanpa jaringan)
+
+`tests/test_bot_session_import.py` menguji sisi bot dari alur import sesi
+dengan seluruh API Telegram di-fake. Tidak butuh token, tidak menyentuh Zoom,
+aman dijalankan kapan saja:
+
+```bash
+python -m pytest tests/test_bot_session_import.py -v
+```
+
+17 test, termasuk enam yang khusus tombol:
+
+| Test | Yang dijaga |
+|---|---|
+| `test_backup_panel_renders_the_import_button` | `callback_data` persis `zoom_import_session` — typo di sini merender tombol yang terlihat benar tapi tidak sampai ke handler |
+| `test_import_button_is_reachable_from_the_main_menu` | jalur klik nyata: menu → Backup & Restore → import |
+| `test_import_button_unreachable_for_a_regular_user` | user biasa tidak diberi jalur ke panel admin |
+| `test_button_callback_has_a_handler` | `callback_data` punya `callback_query` handler; tanpa itu aiogram diam-diam membuangnya |
+| `test_callback_arms_the_state_for_an_admin` | tap admin benar-benar membuka alur dan menampilkan langkah export |
+| `test_callback_rejects_a_non_admin_before_arming_the_state` | non-admin tidak pernah meng-*arm* state milik orang lain |
+
+Sisa testnya mencakup: tombol hanya muncul saat `zoom_control_mode == "remote"`,
+router sesi terdaftar sebelum catch-all, mode kontrol salah ditolak, file >4 MB
+ditolak sebelum diunduh, `/cancel` menghapus state, dan nilai cookie tidak
+pernah muncul di source.
+
+> Nama file itu penting. Semula `bot_session_import_selfcheck.py`, yang **tidak
+> pernah dikumpulkan pytest** karena tidak berawalan `test_` — sebelas assertion
+> yang hanya jalan saat dipanggil manual. Hijau tapi tidak terpicu.
+
+> Kalau test permission/auth gagal dan kode produksi terlihat benar, cek dulu
+> fake-nya. Fungsi sinkron yang di-fake jadi `async def` selalu mengembalikan
+> coroutine yang truthy, sehingga seluruh pemeriksaan izin lolos tanpa
+> menguji apa pun.
+
+##### Menemukan tombol **🔐 Import Sesi Zoom**
+
+Tombol ini **tidak** ada di `/backup` — perintah itu langsung mengunduh file
+zip. Panelnya ada di menu utama:
+
+```
+Menu Utama  →  💾 Backup & Restore  →  🔐 Import Sesi Zoom
+```
+
+Kalau tombolnya tidak muncul setelah bot di-restart, hampir selalu karena
+image `zoom-telebot` belum dibangun ulang — cek dengan:
+
+```bash
+docker compose exec zoom-telebot grep -c zoom_import_session /app/bot/keyboards.py
+```
+
+Hasilnya harus `1`. Kalau `0`, rebuild image-nya.
+
+##### Biaya container idle
+
+Container `zoom-browser` **tetap hidup 24 jam**, tapi hampir gratis: **Chromium
+tidak dijalankan sampai launch pertama**, dan dilepas lagi begitu meeting
+berakhir atau launch gagal. Yang hidup saat idle cuma server aiohttp, bukan
+browser. Terukur di container nyata: **28.96 MiB** saat idle dan healthy
+(`docker stats zoom-browser`), bukan ±400–600 MB seperti kalau Chromium boot
+bersamaan dengan container. Dampaknya `GET /status` → `browser_running: false`
+di antara meeting.
+
+Konsekuensinya: launch pertama tiap container punya cold start ±2 detik,
+yang tersembunyi di dalam `ZOOM_REMOTE_LAUNCH_TIMEOUT` (default 120 detik).
+Tidak ada yang perlu dijalankan manual.
+
+> Disk tetap besar: image Playwright ±2 GB, karena berisi Chromium + system
+> deps-nya. Menghemat RAM tidak menghapus image.
+
+| Variabel | Default | Fungsi |
+| -------- | ------- | ------ |
+| `BROWSER_MEMORY_LIMIT` | `1g` | Batas memori saat meeting aktif. Naikkan hanya kalau Chromium kena OOM-kill. |
+| `BROWSER_CPU_LIMIT` | `1.0` | Batas CPU. Naikkan kalau join terasa lambat di host yang sibuk. |
+| `ZOOM_BROWSER_HOST_PORT` | `8080` | Port **host** untuk `curl` operator. Bot tetap pakai `zoom-browser:8080` di network internal, jadi angka ini cuma relevan kalau proses lain di mesin Anda sudah memegang 8080. |
+
+Verifikasi:
+
+```bash
+# Ganti 8080 kalau ZOOM_BROWSER_HOST_PORT di .env Anda berbeda
+curl -s -H "Authorization: Bearer $ZOOM_REMOTE_API_TOKEN" \
+  http://localhost:8080/status
+# session_ready: true  -> siap dipakai
+# session_ready: false -> sesi habis/expired, ulangi langkah 1
+
+# Bukti lazy start: angka harus kecil
+docker stats zoom-browser --no-stream
+# MEM=28.96MiB saat idle -> Chromium belum jalan, itu memang yang dimaksud
+# MEM=400MiB+ saat idle   -> lazy start rusak, cek CHANGELOG
+```
+
+#### Backend: `zoom-remote` (Kasm, opsional)
+
+Backend lama, hidup di balik compose profile `kasm`:
+
+```bash
+docker compose --profile kasm up -d zoom-remote
+# lalu set di .env:
+# ZOOM_REMOTE_BASE_URL=http://zoom-remote:8080
+# ZOOM_REMOTE_PUBLIC_URL=  (kosongkan, tidak ada VNC)
+```
+
+Hanya berguna untuk browsing VNC manual. Tidak dipakai alur host-join otomatis.
 
 ## 🤖 Perintah Bot
 
@@ -378,6 +581,37 @@ Folder tempat log file disimpan (rotasi harian `zoom-telebot.YYYY-MM-DD.log`)
    - User role validation
    - Data encryption untuk sensitive info
 
+### 🔑 Credential Hygiene
+
+Cookie sesi Zoom hasil export Cookie Editor adalah **kredensial hidup** — siapa pun yang memegangnya bisa masuk ke akun Zoom tanpa password. Perlakukan seperti file
+`.env`, bukan seperti fixture test.
+
+Yang sudah di-ignore:
+
+| Pola | Isi |
+|---|---|
+| `zoom_web_session.json`, `*.storage_state.json` | Sesi yang dipakai host |
+| `dbg/` | Direktori scratch debugging |
+| `*cookies*.json`, `*session_export*.json` | Export yang jatuh di luar prediksi |
+| `.env` | Token bot dan API key |
+
+> Kalau Anda melakukan debugging import sesi, taruh hasil export di `dbg/`.
+> Folder itu sudah di-ignore, jadi aman dari `git add .` yang tidak
+> disengaja. Jangan pernah menyimpannya di repo — termasuk di `tests/`.
+
+CI punya dua lapis pengaman untuk hal ini (`credential-guard`):
+
+- **Scan file terlacak** untuk tiga nama cookie sesi (`_zm_page_auth`,
+  `_zm_multi_ac`, `zm_haid`). `.gitignore` hanya melindungi file baru;
+  file yang sudah terlacak tidak bisa dijangkau `.gitignore`, jadi perlu
+  pemeriksaan terpisah.
+- **Verifikasi bahwa path kredensial benar-benar ter-ignore**, jadi aturan
+  tidak bisa hilang diam-diam saat `.gitignore` diedit.
+
+Kalau guard ini benar-benar memblokir Anda, jangan dihapus — periksa dulu file
+yang ditunjuk. Kalau memang Anda sendiri yang menaruhnya di sana, pindahkan ke
+`dbg/`.
+
 ### 📊 Development vs Production
 
 **Development**:
@@ -402,6 +636,85 @@ LOG_LEVEL=INFO              # Normal logging
 # Runner
 docker compose up -d        # Docker Compose orchestration
 ```
+
+## 🔁 CI — GitHub Actions
+
+Tiga workflow di `.github/workflows/`:
+
+| Workflow | Kapan jalan | Fungsi |
+|---|---|---|
+| `security-audit-and-test.yml` | push, PR, nightly, manual | Audit dependency, Bandit, OSV, self-check, guard kredensial, pytest |
+| `Build-&-Deploy.yml` | manual | Quality check → GitHub Release → build & push image Docker |
+| `Build-Dev.yml` | manual | Build image `dev.vYYYY.MM.DD` → Docker Hub → trigger Portainer |
+
+`security-audit-and-test.yml` punya empat job:
+
+- **`security-audit`** — `pip-audit`, `bandit -ll -ii`, OSV-Scanner.
+- **`run-selfcheck`** — ketiga suite self-check di runner biasa. Yang punya
+  Chromium akan **mengeprint alasannya lalu skip**, bukan gagal diam-diam.
+- **`chromium-selfcheck`** — nightly dan manual saja. Membangun image host
+  (~1,4 GB) lalu menjalankan self-check **di dalamnya**, karena test
+  `restart()` yang menangkap bug `TargetClosedError` hanya bisa gagal di
+  dalam image. Tidak dipasang di jalur push karena biayanya tidak sebanding
+  dengan kode Python yang berubah tiap commit.
+- **`credential-guard`** — dijelaskan di bagian Credential Hygiene di atas.
+
+Menjalankan suite yang sama secara lokal:
+
+```bash
+python -m pytest tests/test_bot_session_import.py -v   # 17 test, tanpa jaringan
+python remote_browser/selfcheck.py                     # 14 kelompok, tanpa jaringan
+python tests/host_confirmation_selfcheck.py
+python -m pytest tests/ -q                             # semuanya, butuh live bot
+```
+
+> Test integrasi (`test_bot_integration`, `test_meeting_details_controls`,
+> `test_remote_host_join`) butuh bot sungguhan. Hentikan container lebih dulu —
+> `docker compose stop zoom-telebot` — kalau tidak, ia memakan update Telegram
+> yang seharusnya dilihat bot lokal dan test tidak akan pernah melihat balasan.
+
+> Kalau test permission gagal tapi kode produksi terlihat benar, cek dulu
+> fake-nya di test — fungsi sinkron yang di-fake jadi `async def` selalu
+> mengembalikan coroutine yang truthy, sehingga seluruh pemeriksaan izin lolos
+> tanpa menguji apa pun.
+
+### 🧹 Membersihkan Meeting Buatan Test
+
+Test integrasi membuat meeting **nyata di akun Zoom asli**. Kebersihan
+akun itu kini ditangani `tests/zoom_test_cleanup.py`, yang dipanggil dari
+`finally` ketiga test — bukan di ujung jalur bahagia, karena setiap `assert`
+yang gagal akan melewati cleanup di sana. Empat meeting bocor dalam satu sore
+sebelum ini diperbaiki.
+
+```bash
+python tests/zoom_test_cleanup.py --dry-run   # lihat dulu, jangan ubah apa pun
+python tests/zoom_test_cleanup.py             # hapus
+```
+
+Untuk database di dalam container:
+
+```bash
+docker cp tests/zoom_test_cleanup.py zoom-telebot-soc:/tmp/
+docker exec zoom-telebot-soc python /tmp/zoom_test_cleanup.py --db /app/zoom_telebot.db
+```
+
+Cara memilih meeting mana yang aman dihapus:
+
+- **`created_by` tidak dipakai.** Test memanggil bot lewat akun Telegram asli,
+  jadi row-nya membawa user ID operator sendiri. Memfilter dengan itu akan ikut
+  menghapus meeting yang dibuat manual oleh orang.
+- **Harus `prefix` + timestamp utuh.** Prefix-nya `"Integration Test Meeting "`,
+  `"Inline Deletion Test "`, `"Controls and Details Test "`, `"HostJoinProbe "`.
+  Satu test yang mengganti topiknya harus memperbarui daftar ini juga, dan
+  `test_every_prefix_comes_from_a_real_test` gagal kalau ada prefix yang sudah
+  tidak dipakai — rename senyap harus muncul sebagai meeting tersisa, bukan
+  sebagai meeting yang diam-diam kita tolak bersihkan).
+
+> **Recording tidak ikut terhapus.** Cloud recording bertahan melewati meeting-nya,
+> jadi kodenya mencoba meng-*trash* recording lebih dulu. Tapi token S2S proyek ini
+> tidak punya scope `recording:write:admin` — Zoom menjawab `400 code 4711`.
+> Sampai scope itu diberikan di Zoom App, **meeting dibersihkan, recording tidak**.
+> Laporan dia mengatakannya apa adanya, bukan mengklaim berhasil.
 
 ## ✨ Recent Updates (June 2026)
 
